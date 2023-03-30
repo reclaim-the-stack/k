@@ -63,6 +63,14 @@ def bold(string)
   $stdout.tty? ? "\e[1m#{string}\e[22m" : string
 end
 
+def kubectl(command)
+  system "kubectl --context #{KUBECTL_CONTEXT} #{command}"
+end
+
+def read_kubectl(command)
+  `kubectl --context #{KUBECTL_CONTEXT} #{command}`
+end
+
 def in_argo_repo
   Dir.chdir INTERNAL_REPO_PATH do
     status = `git status --porcelain`
@@ -156,9 +164,9 @@ def clickhouse
 
   require "json"
 
-  pod = read_kubectl("kubectl get pods -l clickhouse.altinity.com/chi=#{cluster} -o name").lines.first.strip
+  pod = read_kubectl("get pods -l clickhouse.altinity.com/chi=#{cluster} -o name").lines.first.strip
 
-  system "kubectl exec -it #{pod} -- clickhouse-client"
+  kubectl "exec -it #{pod} -- clickhouse-client"
 end
 
 def contexts
@@ -216,18 +224,21 @@ def contexts_add
   github_organization, repository_name = uri.path.delete_prefix("/").split("/")
   repository_name = repository_name.delete_suffix(".git")
 
-  context_name = repository_name
+  default_context_name = repository_name
+  print "What would you like to name this context? [#{default_context_name}] "
+  context_name = readline.strip
+  context_name = default_context_name if context_name.empty?
 
   if K_CONFIG.fetch("contexts").key?(context_name)
     puts "A context named '#{context_name}' already exists"
     print "What would you like to name it instead?"
     context_name = readline.strip
-
-    abort "Error: context name cannot be blank" if context_name.empty?
-    abort "Error: context can only contain alphanumerics, dashes, and underscores" unless context_name =~ /^[a-zA-Z0-9_-]+$/
-    abort "Error: context name '#{context_name}' already exists" if K_CONFIG.fetch("contexts").key?(context_name)
-    puts ""
   end
+
+  abort "Error: context name cannot be blank" if context_name.empty?
+  abort "Error: context can only contain alphanumerics, dashes, and underscores" unless context_name =~ /^[a-zA-Z0-9_-]+$/
+  abort "Error: context name '#{context_name}' already exists" if K_CONFIG.fetch("contexts").key?(context_name)
+  puts ""
 
   default_registry = "docker.io"
   print "Which Docker registry should be used for this context? [#{default_registry}] "
@@ -246,8 +257,8 @@ def contexts_add
   puts "NOTE: write access to the #{registry}/#{registry_namespace} namespace is assumed but not verified"
   puts ""
 
-  current_kubectl_context = `kubectl config current-context`.chomp
-  kubectl_contexts = `kubectl config get-contexts -o name`.lines.map(&:chomp)
+  current_kubectl_context = read_kubectl("config current-context").chomp
+  kubectl_contexts = read_kubectl("config get-contexts -o name").lines.map(&:chomp)
   if kubectl_contexts.empty?
     abort "Error: you don't have any kubectl contexts configured, having kubectl"\
           "connected to a Kubernetes cluster is a prerequisite to using k."
@@ -301,7 +312,7 @@ def kibana
   # kibana.k8s.elastic.co/name=mynewsdesk-funnel
 
   puts "Storing kibana password in clipboard..."
-  system "kubectl get secret #{application}-es-elastic-user --template={{.data.elastic}} | base64 -D | pbcopy"
+  kubectl "get secret #{application}-es-elastic-user --template={{.data.elastic}} | base64 -D | pbcopy"
   puts ""
 
   require "socket"
@@ -313,7 +324,7 @@ def kibana
     puts "Making kibana accessible at: http://localhost:#{port}/app/monitoring#/overview"
     puts "Login with username 'elastic' and paste the password from your clipboard"
     puts ""
-    system "kubectl port-forward service/#{application}-kb-http #{port}:5601"
+    kubectl "port-forward service/#{application}-kb-http #{port}:5601"
   end
 end
 
@@ -361,7 +372,7 @@ def logs
 
   require "json"
 
-  deployments_json = `kubectl get deployments -o json -l argocd.argoproj.io/instance=#{application}`
+  deployments_json = read_kubectl "kubectl get deployments -o json -l argocd.argoproj.io/instance=#{application}"
   deployments = JSON.parse(deployments_json).fetch("items")
   abort "Couldn't find any deployments for the application #{application}" if deployments.empty?
 
@@ -383,7 +394,7 @@ def logs_search
 
   require "json"
 
-  deployments_json = `kubectl get deployments -o json -l argocd.argoproj.io/instance=#{application}`
+  deployments_json = read_kubectl "kubectl get deployments -o json -l argocd.argoproj.io/instance=#{application}"
   deployments = JSON.parse(deployments_json).fetch("items")
   abort "Couldn't find any deployments for the application #{application}" if deployments.empty?
 
@@ -416,12 +427,12 @@ end
 
 module Pg
   def self.exec_on_primary(cluster, command)
-    primary_pod_name = `kubectl get pod --selector=postgres-operator.crunchydata.com/role=master,postgres-operator.crunchydata.com/cluster=#{cluster} -o name`.chomp
-    system "kubectl exec #{primary_pod_name} -it -c database -- #{command}"
+    primary_pod_name = read_kubectl("get pod --selector=postgres-operator.crunchydata.com/role=master,postgres-operator.crunchydata.com/cluster=#{cluster} -o name").chomp
+    kubectl "exec #{primary_pod_name} -it -c database -- #{command}"
   end
 
   def self.query_on_primary(cluster, query)
-    uri = `kubectl get secret #{cluster}-pguser-#{cluster} -o go-template='{{.data.uri | base64decode}}'`
+    uri = read_kubectl "kubectl get secret #{cluster}-pguser-#{cluster} -o go-template='{{.data.uri | base64decode}}'"
     exec_on_primary cluster, %(psql '#{uri}' -c "#{query}")
   end
 end
@@ -452,7 +463,7 @@ def pg_failover
   cluster = ARGV.delete_at(0)
   abort "Must pass name of cluster, eg. k pg:failover <cluster-name>" unless cluster
 
-  system %(kubectl annotate postgrescluster #{cluster} --overwrite postgres-operator.crunchydata.com/trigger-switchover="$(date)") # rubocop:disable Layout/LineLength
+  kubectl %(annotate postgrescluster #{cluster} --overwrite postgres-operator.crunchydata.com/trigger-switchover="$(date)")
 end
 
 def pg_patroni
@@ -465,11 +476,11 @@ def pg_patroni
 end
 
 def pg_pods
-  system "kubectl get pods -o wide --selector=postgres-operator.crunchydata.com/data=postgres"
+  kubectl "get pods -o wide --selector=postgres-operator.crunchydata.com/data=postgres"
 end
 
 def pg_primaries
-  system "kubectl get pods -o wide --selector=postgres-operator.crunchydata.com/role=master"
+  kubectl "get pods -o wide --selector=postgres-operator.crunchydata.com/role=master"
 end
 
 def pg_proxy
@@ -483,7 +494,7 @@ def pg_psql
   require "json"
   require "base64"
 
-  secret = JSON.parse(`kubectl get secret #{cluster}-pguser-#{cluster} -o json`).fetch("data")
+  secret = JSON.parse(read_kubectl("get secret #{cluster}-pguser-#{cluster} -o json")).fetch("data")
 
   use_pg_bouncer = secret.key?("pgbouncer-uri")
   uri = Base64.strict_decode64(secret.fetch(use_pg_bouncer ? "pgbouncer-uri" : "uri"))
@@ -496,9 +507,9 @@ def pg_resources
   cluster = ARGV.delete_at(0)
   abort "Must pass name of cluster, eg. k pg:status <cluster-name>" unless cluster
 
-  system "kubectl get all --selector=postgres-operator.crunchydata.com/cluster=#{cluster}"
+  kubectl "get all --selector=postgres-operator.crunchydata.com/cluster=#{cluster}"
   puts ""
-  system "kubectl get secrets --selector=postgres-operator.crunchydata.com/cluster=#{cluster}"
+  kubectl "get secrets --selector=postgres-operator.crunchydata.com/cluster=#{cluster}"
 end
 
 def pg_uri
@@ -508,7 +519,7 @@ def pg_uri
   require "json"
   require "base64"
 
-  secret = JSON.parse(`kubectl get secret #{cluster}-pguser-#{cluster} -o json`).fetch("data")
+  secret = JSON.parse(read_kubectl("get secret #{cluster}-pguser-#{cluster} -o json")).fetch("data")
   uri = Base64.strict_decode64(secret.fetch("uri"))
   pgbouncer_uri = Base64.strict_decode64(secret.fetch("pgbouncer-uri")) if secret.key?("pgbouncer-uri")
   puts "Postgres URI: #{uri}"
@@ -673,7 +684,7 @@ def run
 
   require "json"
 
-  deployments_json = `kubectl get deployments -o json -l argocd.argoproj.io/instance=#{application}`
+  deployments_json = read_kubectl "get deployments -o json -l argocd.argoproj.io/instance=#{application}"
   deployments = JSON.parse(deployments_json).fetch("items")
   abort "Couldn't find any deployments for the application #{application}" if deployments.empty?
 
@@ -709,18 +720,18 @@ def run
   }
 
   puts "Creating pod #{pod_name}..."
-  system("echo '#{pod_template.to_json}' | kubectl apply -f -") || abort("failed to create pod")
+  system("echo '#{pod_template.to_json}' | kubectl --context #{KUBECTL_CONTEXT} apply -f -") || abort("failed to create pod")
 
-  unless system("kubectl wait pod #{pod_name} --for=condition=ContainersReady --timeout=120s > /dev/null")
+  unless kubectl("wait pod #{pod_name} --for=condition=ContainersReady --timeout=120s > /dev/null")
     puts "failed to start pod, attempting to delete it..."
-    system "kubectl delete pod #{pod_name} --wait=false"
+    kubectl "delete pod #{pod_name} --wait=false"
     abort
   end
 
   command = ARGV.join(" ")
   puts "Running #{command} on #{pod_name}..."
-  command_success = system "kubectl exec #{pod_name} -it -- sh -c '#{command}'"
-  system("kubectl delete pod #{pod_name} --wait=false") || abort("failed to delete the pod")
+  command_success = kubectl "exec #{pod_name} -it -- sh -c '#{command}'"
+  kubectl("delete pod #{pod_name} --wait=false") || abort("failed to delete the pod")
   abort unless command_success
 end
 
@@ -752,7 +763,7 @@ def config
 
     shared_secrets = (values["envFrom"] || []).map { |config| config.fetch("secretRef").fetch("name") }
     shared_secrets.each do |secret_name|
-      secret = YAML.safe_load(`kubectl get secret #{secret_name} -o yaml`)
+      secret = YAML.safe_load read_kubectl("get secret #{secret_name} -o yaml")
       secret_env = secret.fetch("data").transform_values do |value|
         { value: Base64.strict_decode64(value), source: secret_name }
       end
@@ -768,7 +779,7 @@ def config
           if (secret_ref = value_from["secretKeyRef"])
             secret_name = secret_ref.fetch("name")
             secret_key = secret_ref.fetch("key")
-            secret = YAML.safe_load(`kubectl get secret #{secret_name} -o yaml`)
+            secret = YAML.safe_load read_kubectl("get secret #{secret_name} -o yaml")
             value = Base64.strict_decode64(secret.fetch("data").fetch(secret_key))
             env[name] = { value: value, source: "values.yaml ref: #{secret_name}.#{secret_key}" }
           else
@@ -864,7 +875,7 @@ def config_get
 
     shared_secrets = (values["envFrom"] || []).map { |config| config.fetch("secretRef").fetch("name") }
     shared_secrets.each do |secret_name|
-      secret = YAML.safe_load(`kubectl get secret #{secret_name} -o yaml`)
+      secret = YAML.safe_load read_kubectl("get secret #{secret_name} -o yaml")
       secret_env = secret.fetch("data").transform_values do |value|
         { value: Base64.strict_decode64(value), source: secret_name }
       end
@@ -880,7 +891,7 @@ def config_get
           if (secret_ref = value_from["secretKeyRef"])
             secret_name = secret_ref.fetch("name")
             secret_key = secret_ref.fetch("key")
-            secret = YAML.safe_load(`kubectl get secret #{secret_name} -o yaml`)
+            secret = YAML.safe_load read_kubectl("get secret #{secret_name} -o yaml")
             value = Base64.strict_decode64(secret.fetch("data").fetch(secret_key))
             env[name] = { value: value, source: "values.yaml ref: #{secret_name}.#{secret_key}" }
           else
@@ -974,11 +985,11 @@ EOF)
     puts new_image
 
     1.upto(120) do |second|
-      deployments = `
-        kubectl get deployments \
+      deployments = read_kubectl %(
+        get deployments \
         -l argocd.argoproj.io/instance=#{application} \
         -o=jsonpath="{.items[*].spec.template.spec.containers[*].image}"
-      `
+      )
       break if deployments.include?(new_image)
 
       abort "Error: Timed out waiting for new image deployment" if second == 120
@@ -1116,7 +1127,7 @@ def secrets
   in_argo_repo do
     application_secrets = Dir.glob("applications/*/values.yaml").each_with_object({}) do |path, hash|
       application = path.split("/")[1]
-      YAML.load_file(path)["envFrom"].each do |entry|
+      YAML.load_file(path)["envFrom"]&.each do |entry|
         secret = entry.fetch("secretRef").fetch("name")
         hash[secret] ||= []
         hash[secret] << application
@@ -1164,7 +1175,7 @@ def secrets_edit
     require "yaml"
     require "base64"
 
-    original_secret = YAML.safe_load(`kubectl get secret #{shared_secret} -o yaml`)
+    original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} -o yaml")
     original_env = original_secret.fetch("data").transform_values(&Base64.method(:strict_decode64))
 
     # Write temporary file and launch editor
@@ -1260,17 +1271,17 @@ def sh
   abort "Must pass name of a deployment, statefulset or pod, eg. k sh <deployment|statefulset|pod>" unless resource
 
   resource_type =
-    if system("kubectl get pods/#{resource} &> /dev/null")
+    if kubectl("get pods/#{resource} &> /dev/null")
       "pods"
-    elsif system("kubectl get deployments/#{resource} &> /dev/null")
+    elsif kubectl("get deployments/#{resource} &> /dev/null")
       "deployments"
-    elsif system("kubectl get statefulsets/#{resource} &> /dev/null")
+    elsif kubectl("get statefulsets/#{resource} &> /dev/null")
       "statefulsets"
     else
       abort "Error: '#{resource_type}' not found among pods, deployments or statefulsets"
     end
 
-  exec "kubectl exec -it #{resource_type}/#{resource} -- sh"
+  exec "kubectl exec --context #{KUBECTL_CONTEXT} -it #{resource_type}/#{resource} -- sh"
 end
 
 def _exec
@@ -1278,21 +1289,21 @@ def _exec
   abort "Must pass name of deployment, eg. k exec <deployment>" unless deployment
   abort "Must pass a command to run, eg. k exec <deployment> <command>" if ARGV.empty?
 
-  exec "kubectl exec -it deployments/#{deployment} -- #{ARGV.join(' ')}"
+  exec "kubectl exec  --context #{KUBECTL_CONTEXT} -it deployments/#{deployment} -- #{ARGV.join(' ')}"
 end
 
 def nodes
-  system "kubectl get nodes -o wide"
+  kubectl "get nodes -o wide"
 end
 
 def verify
-  system "helm template . | kubectl apply --dry-run=server -f -"
+  system "helm template . | kubectl apply --context #{KUBECTL_CONTEXT} --dry-run=server -f -"
 end
 
 def playground
   node_hostname =
     if ARGV.empty?
-      workers = `kubectl get nodes -o name`.split("\n")
+      workers = read_kubectl("kubectl get nodes -o name").split("\n")
       worker_one = workers.find { |name| name.include?("worker-1") }
       abort "Error: no worker-1 node found" unless worker_one
 
@@ -1302,14 +1313,14 @@ def playground
     else
       ARGV.delete_at(0)
     end
-  abort "Error: node '#{node_hostname}' not found" unless system("kubectl get node #{node_hostname} &> /dev/null")
+  abort "Error: node '#{node_hostname}' not found" unless kubectl("get node #{node_hostname} &> /dev/null")
 
   require "securerandom"
 
   # TODO: Move to reclaim-the-stack docker registry
   image = "mynewsdesk/utils:20230206-154225"
   exec %(
-    kubectl run playground-#{SecureRandom.hex(3)} -it --restart=Never --rm --image #{image} \
+    kubectl --context #{KUBECTL_CONTEXT} run playground-#{SecureRandom.hex(3)} -it --restart=Never --rm --image #{image} \
     --overrides='
       {
         "apiVersion": "v1",
@@ -1576,7 +1587,7 @@ def redis_cli
 
   require "yaml"
 
-  endpoint_yaml = `kubectl get endpoints/#{application}-redis-master -o yaml`
+  endpoint_yaml = read_kubectl "kubectl get endpoints/#{application}-redis-master -o yaml"
   abort "Error: no master endpoint found for #{application} (looked for #{application}-redis-master)" if endpoint_yaml.empty?
 
   endpoint = YAML.safe_load(endpoint_yaml)
@@ -1584,7 +1595,7 @@ def redis_cli
   abort "Error: no master pod name found in endpoint YAML for #{application}-redis-master" unless master_pod
 
   puts "Running redis-cli on #{master_pod}..."
-  system "kubectl exec -c redis -it #{master_pod} -- redis-cli"
+  kubectl "exec -c redis -it #{master_pod} -- redis-cli"
 end
 
 # TODO: This should use sentinel failover instead of redis failover
@@ -1594,7 +1605,7 @@ def redis_failover
 
   require "yaml"
 
-  endpoint_yaml = `kubectl get endpoints/#{application}-redis-master -o yaml`
+  endpoint_yaml = read_kubectl "get endpoints/#{application}-redis-master -o yaml"
   abort "Error: no master endpoint found for #{application} (looked for #{application}-redis-master)" if endpoint_yaml.empty?
 
   endpoint = YAML.safe_load(endpoint_yaml)
@@ -1602,11 +1613,11 @@ def redis_failover
   abort "Error: no master pod name found in endpoint YAML for #{application}-redis-master" unless master_pod
 
   puts "Running redis-cli with FAILOVER command on #{master_pod}..."
-  system "kubectl exec -c redis -it #{master_pod} -- redis-cli FAILOVER"
+  kubectl "exec -c redis -it #{master_pod} -- redis-cli FAILOVER"
 
   puts "Running redis-cli with CLIENT KILL TYPE normal on #{master_pod} for 30 seconds to evict existing connections..."
   30.times do
-    system "kubectl exec -c redis -it #{master_pod} -- redis-cli CLIENT KILL TYPE normal"
+    kubectl "exec -c redis -it #{master_pod} -- redis-cli CLIENT KILL TYPE normal"
     sleep 1
   end
 end
