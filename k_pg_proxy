@@ -1,7 +1,5 @@
 #!/usr/bin/env ruby
 
-# TODO: handle kubectl context switching
-
 require "base64"
 require "digest"
 require "json"
@@ -11,6 +9,7 @@ require "socket"
 
 PROXY_PORT = 10_000
 THREADS = 10
+CONTEXT = ARGV.first || `kubectl config current-context`.strip
 
 def parse_startup_message(client_socket)
   length = client_socket.read(4).unpack("L>").first - 4
@@ -190,10 +189,10 @@ def handle_connection(client_socket, connection_number)
   database = params.fetch("database")
 
   # Start port forward and connect to Kubernetes Postgres
-  primary_pod = `kubectl get pod -o name -l postgres-operator.crunchydata.com/cluster=#{database},postgres-operator.crunchydata.com/role=master`.chomp # rubocop:disable Layout/LineLength
+  primary_pod = `kubectl --context #{CONTEXT} get pod -o name -l postgres-operator.crunchydata.com/cluster=#{database},postgres-operator.crunchydata.com/role=master`.chomp # rubocop:disable Layout/LineLength
   port_forward_port = PROXY_PORT + connection_number
   port_forward_pid = spawn(
-    "kubectl port-forward #{primary_pod} #{port_forward_port}:5432",
+    "kubectl --context #{CONTEXT} port-forward #{primary_pod} #{port_forward_port}:5432",
     err: File::NULL,
   )
   Process.detach(port_forward_pid)
@@ -204,7 +203,7 @@ def handle_connection(client_socket, connection_number)
   authentication_ok = ["R", 8, 0].pack("aL>L>")
   client_socket.write(authentication_ok)
 
-  secret = JSON.parse(`kubectl get secret #{database}-pguser-#{database} -o json`)
+  secret = JSON.parse(`kubectl --context #{CONTEXT} get secret #{database}-pguser-#{database} -o json`)
 
   send_startup_message(pg_socket, user: Base64.strict_decode64(secret.fetch("data").fetch("user")), database: database)
   success = handle_authentication(pg_socket, password: Base64.strict_decode64(secret.fetch("data").fetch("password")))

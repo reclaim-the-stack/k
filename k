@@ -580,7 +580,7 @@ def pg_primaries
 end
 
 def pg_proxy
-  exec "k_pg_proxy"
+  exec "#{__dir__}/k_pg_proxy #{KUBECTL_CONTEXT}"
 end
 
 def pg_psql
