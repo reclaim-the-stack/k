@@ -1,5 +1,7 @@
 #!/usr/bin/env ruby
 
+# TODO: handle kubectl context switching
+
 require "base64"
 require "digest"
 require "json"

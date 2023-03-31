@@ -5,6 +5,8 @@
 
 require "yaml"
 
+# rubocop:disable Style/StringConcatenation
+
 K_CONFIG_FILE = "#{ENV.fetch('HOME')}/.k/config".freeze
 
 unless File.exist?(K_CONFIG_FILE)
@@ -88,12 +90,16 @@ def in_argo_repo
 end
 
 def print_commands
-  # rubocop:disable Style/StringConcatenation
   puts "COMMANDS:"
   puts "k applications [<application>]" + gray(" list applications or show application details")
+  puts "k build-and-push" + gray(" build and push a docker image for an application")
   puts "k config <application> [<search-string>]" + gray(" list ENV vars for an application")
   puts "k config:edit <application>" + gray(" edit ENV vars on an application")
   puts "k config:get <application> <env-var>" + gray(" prints a single environment variable value for an application")
+  puts "k contexts" + gray(" list available contexts")
+  puts "k contexts:add <github-repository>" + gray(" add a new context")
+  puts "k contexts:use <context>" + gray(" switch to a different context")
+  puts "k contexts:remove <context>" + gray(" remove a context")
   puts "k console <application>" + gray(" start a rails console on an application")
   puts "k dashboard <application>" + gray(" opens application dashboard in grafana")
   puts "k deploy <application>" + gray(" deploy docker image to an application (run from repo/branch you want to deploy)")
@@ -111,12 +117,12 @@ def print_commands
   puts "k secrets [<specific-secret>]" + gray(" lists secrets including usage details")
   puts "k secrets:create <secret-name>" + gray(" create a new secret")
   puts "k secrets:edit <secret-name>" + gray(" edit a secret")
+  puts "k update" + gray(" update k to the latest version")
   puts ""
   puts "DEBUGGING COMMANDS:"
   puts "k playground <node-name>" + gray(" open a utilities shell on a kubernetes node")
   puts "k sh <pod|deployment|statefulset>" + gray(" shell into a live deployment")
   puts "k exec <deployment> <command>" + gray(" execute a command on a live deployment")
-  # rubocop:enable Style/StringConcatenation
 end
 
 PRIVATE_METHODS_BEFORE_COMMANDS = private_methods.dup.freeze
@@ -140,13 +146,13 @@ def applications
       requested_applications.each do |application|
         puts "#{gray('===')} #{bold(application)}"
         values = YAML.load_file("applications/#{application}/values.yaml")
-        scaling = values["scaling"].to_h.map do |name, data|
+        deployments = values["deployments"].to_h.map do |name, data|
           name_kebab = name.gsub(/(.)([A-Z])/, '\1-\2').downcase
           "#{name_kebab}: #{data.fetch('replicas')}"
         end
         puts ""
-        puts "Scaling:"
-        puts scaling
+        puts "Deployments:"
+        puts deployments
         puts ""
         resources = values["resources"].to_h.map { |name, data| "#{name}: #{data['replicas']}" }
         puts "Resources:"
@@ -157,6 +163,74 @@ def applications
 end
 
 alias apps applications
+
+def build_and_push
+  abort "Error: you need to be in a git repository to use this command" unless File.exist?(".git")
+  abort "Error: expected to be able to detect repository name via a git remote but non exist" unless system("git remote")
+
+  git_remotes = `git remote`.split("\n")
+  remote_to_use = git_remotes.include?("origin") ? "origin" : git_remotes.first
+
+  repository = `git remote get-url #{remote_to_use}`.strip.split("/").last.delete_suffix(".git")
+  git_sha = `git rev-parse HEAD`.chomp
+  docker_repository = "#{REGISTRY}/#{repository}"
+  target_image = "#{docker_repository}:sha-#{git_sha}"
+
+  if ARGV.include?("help")
+    puts bold "Description"
+    puts "Builds and pushes a docker image for an application. By default it will use the "\
+         "docker registry and namespace configured in the current k context, the repository name "\
+         "as image name and the current git SHA as the tag."
+    puts "For Dockerfile we will look for Dockerfile.k, Dockerfile.kubernetes and Dockerfile in "\
+         "that order. This allows you to use a custom Dockerfile for kubernetes builds if so desired)."
+    puts ""
+    puts "In this case this would be:"
+    puts target_image
+    puts ""
+    puts bold "Usage"
+    puts "k build-and-push help" + gray(" displays this help message")
+    puts "k build-and-push" + gray(" builds using Dockerfile and pushes to default image")
+    exit
+  end
+
+  dockerfile =
+    if File.exist?("Dockerfile.k")
+      "Dockerfile.k"
+    elsif File.exist?("Dockerfile.kubernetes")
+      "Dockerfile.kubernetes"
+    elsif File.exist?("Dockerfile")
+      "Dockerfile"
+    else
+      abort "Error: no Dockerfile found in current directory"
+    end
+
+  build_args = []
+  build_args << "--build-arg RUBY_VERSION=#{File.read('.ruby-version').chomp} \\" if File.exist?(".ruby-version")
+
+  command = <<~BASH
+    docker buildx build . \\
+      -f #{dockerfile} \\
+      #{build_args.join("\n")}
+      --platform linux/amd64 \\
+      -t #{docker_repository}:latest \\
+      -t #{target_image} \\
+      --cache-from type=registry,ref=#{docker_repository} \\
+      --cache-to type=registry,ref=#{docker_repository} \\
+      --progress plain
+  BASH
+
+  puts bold "Building with command"
+  puts command
+  system_or_die command
+  puts ""
+
+  command = <<~BASH
+    docker push #{target_image}
+  BASH
+  puts bold "Pushing with command"
+  puts command
+  system_or_die command
+end
 
 def clickhouse
   cluster = ARGV.delete_at(0)
@@ -257,8 +331,8 @@ def contexts_add
   puts "NOTE: write access to the #{registry}/#{registry_namespace} namespace is assumed but not verified"
   puts ""
 
-  current_kubectl_context = read_kubectl("config current-context").chomp
-  kubectl_contexts = read_kubectl("config get-contexts -o name").lines.map(&:chomp)
+  current_kubectl_context = `kubectl config current-context`.chomp
+  kubectl_contexts = `kubectl config get-contexts -o name`.lines.map(&:chomp)
   if kubectl_contexts.empty?
     abort "Error: you don't have any kubectl contexts configured, having kubectl"\
           "connected to a Kubernetes cluster is a prerequisite to using k."
@@ -292,9 +366,30 @@ def contexts_add
   puts "The context '#{context_name}' was added and is now active 🚀"
 end
 
-def contexts_set
+def contexts_remove
   context_name = ARGV.delete_at(0)
-  abort "Must pass name of context, eg. k contexts:set <context>" unless context_name
+  abort "Must pass name of context to remove, eg. k contexts:remove <context>" unless context_name
+
+  abort "Error: context '#{context_name}' does not exist" unless K_CONFIG.fetch("contexts").key?(context_name)
+
+  require "fileutils"
+
+  FileUtils.rm_rf "#{ENV.fetch('HOME')}/.k/#{context_name}"
+  K_CONFIG["context"] = nil if K_CONFIG["context"] == context_name
+  K_CONFIG.fetch("contexts").delete(context_name)
+  File.write(K_CONFIG_FILE, K_CONFIG.to_yaml)
+
+  puts ""
+  puts "Context '#{context_name}' was removed 🗑"
+  unless K_CONFIG["context"]
+    puts ""
+    puts "Warning: You now have no active context, run `k contexts:set <context>` to set one"
+  end
+end
+
+def contexts_use
+  context_name = ARGV.delete_at(0)
+  abort "Must pass name of context, eg. k contexts:use <context>" unless context_name
 
   abort "Error: context '#{context_name}' does not exist" unless K_CONFIG.fetch("contexts").key?(context_name)
 
@@ -330,10 +425,11 @@ end
 
 # NOTE: not ready for use and we might not need this
 def config_set
+  abort "Error: config:set has not been implemented, please use config:edit / secrets:edit instead"
+
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k logs <application> <env-vars>" unless application
   abort "Must pass some ENV vars to set, eg. k logs <application> ENV_VAR=value" if ARGV.empty?
-
   # env_vars = ARGV.each do |env_pair|
   #   match = env_pair.match(/([A-Z]+)=(.+)/m)
   #   abort "Error: #{env_pair} is not a valid ENV var" unless match
@@ -372,7 +468,7 @@ def logs
 
   require "json"
 
-  deployments_json = read_kubectl "kubectl get deployments -o json -l argocd.argoproj.io/instance=#{application}"
+  deployments_json = read_kubectl "get deployments -o json -l argocd.argoproj.io/instance=#{application}"
   deployments = JSON.parse(deployments_json).fetch("items")
   abort "Couldn't find any deployments for the application #{application}" if deployments.empty?
 
@@ -394,7 +490,7 @@ def logs_search
 
   require "json"
 
-  deployments_json = read_kubectl "kubectl get deployments -o json -l argocd.argoproj.io/instance=#{application}"
+  deployments_json = read_kubectl "get deployments -o json -l argocd.argoproj.io/instance=#{application}"
   deployments = JSON.parse(deployments_json).fetch("items")
   abort "Couldn't find any deployments for the application #{application}" if deployments.empty?
 
@@ -432,7 +528,7 @@ module Pg
   end
 
   def self.query_on_primary(cluster, query)
-    uri = read_kubectl "kubectl get secret #{cluster}-pguser-#{cluster} -o go-template='{{.data.uri | base64decode}}'"
+    uri = read_kubectl "get secret #{cluster}-pguser-#{cluster} -o go-template='{{.data.uri | base64decode}}'"
     exec_on_primary cluster, %(psql '#{uri}' -c "#{query}")
   end
 end
@@ -1044,7 +1140,6 @@ def releases
     releases = lookup_latest_releases(application)
     longest_subject = releases.map(&:subject).max_by(&:length)
 
-    # rubocop:disable Style/StringConcatenation
     puts gray("=== ") + bold(application) + bold(" Releases")
     puts ""
     puts gray("Version".ljust(13) + "Time".ljust(21) + "Subject".ljust(longest_subject.length + 2) + "Author")
@@ -1057,7 +1152,6 @@ def releases
         end
       puts "#{bold(release.pretty_sha)}  #{green(time_to_show)}  #{release.subject.ljust(longest_subject.length)}  #{cyan(release.author)}"
     end
-    # rubocop:enable Style/StringConcatenation
   end
 end
 
@@ -1071,7 +1165,6 @@ def rollback
     releases = lookup_latest_releases(application)
     longest_subject = releases.map(&:subject).max_by(&:length)
 
-    # rubocop:disable Style/StringConcatenation
     puts gray("=== ") + bold(application) + bold(" Rollback")
     puts ""
     puts gray("    Version".ljust(17) + "Time".ljust(21) + "Subject".ljust(longest_subject.length + 2) + "Author")
@@ -1087,7 +1180,6 @@ def rollback
       puts "#{version}  #{green(time_to_show)}  #{release.subject.ljust(longest_subject.length)}  #{cyan(release.author)}"
     end
     puts ""
-    # rubocop:enable Style/StringConcatenation
 
     number_of_choices = releases.length - 1
     print "Which version would you like to rollback to [1-#{number_of_choices}]: "
@@ -1255,11 +1347,11 @@ def secrets_create
     }.to_yaml
 
     File.write tmp_file, secret_yaml
-    system "kubeseal -f #{tmp_file} -o yaml > #{secret_path}"
+    system_or_die "kubeseal -f #{tmp_file} -o yaml > #{secret_path}"
     File.delete tmp_file
 
-    system "git add #{secret_path}"
-    system %(git commit -m "shared-secrets: add #{secret}" --quiet)
+    system_or_die "git add #{secret_path}"
+    system_or_die %(git commit -m "shared-secrets: add #{secret}" --quiet)
     safe_git_push
 
     puts "Successfully created the secret '#{secret}'"
@@ -1303,7 +1395,7 @@ end
 def playground
   node_hostname =
     if ARGV.empty?
-      workers = read_kubectl("kubectl get nodes -o name").split("\n")
+      workers = read_kubectl("get nodes -o name").split("\n")
       worker_one = workers.find { |name| name.include?("worker-1") }
       abort "Error: no worker-1 node found" unless worker_one
 
@@ -1382,11 +1474,9 @@ def generate
          "your own clone of the devops-kubernetes repository."
     puts ""
     puts "GENERATORS:"
-    # rubocop:disable Style/StringConcatenation
     puts "k generate application <application-name>" + gray(" generates a new application")
     puts "k generate deployment <application-name>" + gray(" generates a deployment for an application (web, sidekiq etc)")
     puts "k generate resource <application-name>" + gray(" generates a resource for an application (postgres, redis etc)")
-    # rubocop:enable Style/StringConcatenation
   end
 end
 
@@ -1413,7 +1503,14 @@ def generate_application
     }
     file.write chart.to_yaml.delete_prefix("---\n")
   end
-  File.write("#{directory}/values.yaml", "")
+  File.write(
+    "#{directory}/values.yaml",
+    {
+      "deployments" => {},
+      "resources" => {},
+    }.to_yaml.delete_prefix("---\n"),
+  )
+  File.write("#{directory}/templates/.gitkeep", "")
 
   puts "Generated application skeleton:"
   puts "#{directory}/Chart.yaml"
@@ -1431,19 +1528,16 @@ def generate_deployment
   values_path = "#{app_path}/values.yaml"
   abort "Error: no helm values found at '#{values_path}'" unless File.exist?(values_path)
 
-  puts "What type of deployment are you creating?"
-  puts "1. Web"
-  puts "2. Sidekiq"
-  puts "3. Other"
-  type =
-    case readline.strip.downcase[0]
-    when "1" then "web"
-    when "2" then "sidekiq"
-    when "3" then "other"
-    else
-      abort "Error: faulty input, must be a value from 1-3"
-    end
-  puts ""
+  deployment_types = Dir.glob("generators/deployments/*.yaml").map { |path| File.basename(path, ".yaml") }
+  abort "Error: no deployment generators found in 'generators/deployments'" if deployment_types.empty?
+
+  puts "What type of deployment do you wish to generate?"
+  deployment_types.each_with_index do |type, index|
+    puts "#{index + 1}. #{type.capitalize}"
+  end
+  selection = readline.to_i
+  abort "Error: invalid selection" unless (1..deployment_types.length).include?(selection)
+  type = deployment_types[selection - 1]
 
   if type == "other"
     print "Please give the deployment a name: "
@@ -1469,11 +1563,11 @@ def generate_deployment
     abort "Error: there is already an existing deployment named '#{name}'"
   end
 
-  default_image = "#{REGISTRY}/#{application}:sha-<git-sha>"
+  default_image = "#{REGISTRY}/#{application}:latest"
 
   camel_name = name.split("-").map.with_index { |word, i| i == 0 ? word : word.capitalize }.join
   deployment_template = format(
-    File.read("templates/deployment-#{type}.yaml"),
+    File.read("generators/deployments/#{type}.yaml"),
     application: application,
     name: name,
     camelName: camel_name,
@@ -1481,7 +1575,7 @@ def generate_deployment
   )
 
   File.write("#{app_path}/templates/deployment-#{name}.yaml", deployment_template)
-  puts "Created " + bold("#{app_path}/templates/#{name}.yaml") # rubocop:disable Style/StringConcatenation
+  puts "Created " + bold("#{app_path}/templates/deployment-#{name}.yaml")
   puts ""
 
   values_example = deployment_template
@@ -1503,9 +1597,8 @@ def generate_deployment
     puts bold("infrastructure/cloudflared/config-map.yaml")
     puts ""
     puts "Example:"
-    # TODO: replace mynewsdesk.dev reference
-    puts "- hostname: #{application}.mynewsdesk.dev"
-    puts "  service: http://#{application}-web.default.svc:3000"
+    puts "- hostname: #{application}.example.com"
+    puts "  service: http://#{application}-web:3000"
   end
 end
 
@@ -1519,21 +1612,16 @@ def generate_resource
   values_path = "#{app_path}/values.yaml"
   abort "Error: no helm values found at '#{values_path}'" unless File.exist?(values_path)
 
-  puts "What type of resource would you like to generate?"
-  puts "1. Postgres"
-  puts "2. Redis"
-  puts "3. Elasticsearch"
-  puts "4. Memcached"
-  type =
-    case readline.strip.downcase[0]
-    when "1" then "postgres"
-    when "2" then "redis"
-    when "3" then "elasticsearch"
-    when "4" then "memcached"
-    else
-      abort "Error: faulty input, must be a value from 1-4"
-    end
-  puts ""
+  resource_types = Dir.glob("generators/resources/*.yaml").map { |path| File.basename(path, ".yaml") }
+  abort "Error: no deployment generators found in 'generators/deployments'" if resource_types.empty?
+
+  puts "What type of deployment do you wish to generate?"
+  resource_types.each_with_index do |type, index|
+    puts "#{index + 1}. #{type.capitalize}"
+  end
+  selection = readline.to_i
+  abort "Error: invalid selection" unless (1..resource_types.length).include?(selection)
+  type = resource_types[selection - 1]
 
   name = type
 
@@ -1556,7 +1644,7 @@ def generate_resource
 
   camel_name = name.split("-").map.with_index { |word, i| i == 0 ? word : word.capitalize }.join
   resource_template = format(
-    File.read("templates/#{type}.yaml"),
+    File.read("generators/resources/#{type}.yaml"),
     application: application,
     name: name,
     camelName: camel_name,
@@ -1564,7 +1652,7 @@ def generate_resource
   )
 
   File.write("#{app_path}/templates/#{name}.yaml", resource_template)
-  puts "Created " + bold("#{app_path}/templates/#{name}.yaml") # rubocop:disable Style/StringConcatenation
+  puts "Created " + bold("#{app_path}/templates/#{name}.yaml")
   puts ""
 
   values_example = resource_template
@@ -1587,7 +1675,7 @@ def redis_cli
 
   require "yaml"
 
-  endpoint_yaml = read_kubectl "kubectl get endpoints/#{application}-redis-master -o yaml"
+  endpoint_yaml = read_kubectl "get endpoints/#{application}-redis-master -o yaml"
   abort "Error: no master endpoint found for #{application} (looked for #{application}-redis-master)" if endpoint_yaml.empty?
 
   endpoint = YAML.safe_load(endpoint_yaml)
@@ -1620,6 +1708,13 @@ def redis_failover
     kubectl "exec -c redis -it #{master_pod} -- redis-cli CLIENT KILL TYPE normal"
     sleep 1
   end
+end
+
+def update
+  abort "Error: k update is only supported when installed via brew for now" unless `which k`.include?("homebrew")
+
+  puts "Updating k via `brew reinstall k`..."
+  system "brew reinstall k"
 end
 
 PRIVATE_METHODS_AFTER_COMMANDS = private_methods - PRIVATE_METHODS_BEFORE_COMMANDS
@@ -1676,6 +1771,8 @@ def lookup_latest_releases(application)
   end
 end
 
+# rubocop:enable Style/StringConcatenation
+
 def dispatch(command)
   command = "_exec" if command == "exec"
   method = command.split(/[:-]/).join("_")
@@ -1683,7 +1780,7 @@ def dispatch(command)
   send method
 rescue NoMethodError => e
   # If the NoMethodError happened inside of the actual command we want to raise it
-  raise unless e.name == method.to_sym
+  raise unless e.name.to_s == method.to_s
 
   did_you_mean = DidYouMean::SpellChecker.new(dictionary: PRIVATE_METHODS_AFTER_COMMANDS)
     .correct(method)
