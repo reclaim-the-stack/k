@@ -9,7 +9,7 @@ Note: A recent version of `ruby` is recommended to run `k`. You may get away wit
 Via Homebrew:
 
 ```
-brew install reclaim-the-stack/tap/k
+brew install --HEAD reclaim-the-stack/tap/k
 ```
 
 Without Homebrew:
