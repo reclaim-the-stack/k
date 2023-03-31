@@ -1594,12 +1594,28 @@ def generate_deployment
   end
 
   if type == "web"
+    require "yaml"
+
+    domain =
+      if File.exist?("platform-applications/cloudflared.yaml")
+        begin
+          YAML.load_file("platform/cloudflared/config.yaml")
+            .fetch("ingress")
+            .find { |ingress| ingress["hostname"].start_with?("argocd") }
+            .then { |ingress| ingress["hostname"].split(".").drop(1).join(".") }
+        rescue StandardError
+          "example.com"
+        end
+      else
+        "example.com"
+      end
+
     puts ""
     puts "To expose the deployment to the internet add an entry to the ingress section in:"
     puts bold("infrastructure/cloudflared/config-map.yaml")
     puts ""
     puts "Example:"
-    puts "- hostname: #{application}.example.com"
+    puts "- hostname: #{application}.#{domain}"
     puts "  service: http://#{application}-web:3000"
   end
 end
