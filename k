@@ -1508,6 +1508,8 @@ def generate_application
     {
       "deployments" => {},
       "resources" => {},
+      "envFrom" => [],
+      "env" => [],
     }.to_yaml.delete_prefix("---\n"),
   )
   File.write("#{directory}/templates/.gitkeep", "")
