@@ -24,12 +24,12 @@ end
 
 K_CONFIG = YAML.load_file(K_CONFIG_FILE)
 
-if (context = K_CONFIG["contexts"][K_CONFIG["context"]])
-  ORGANIZATION = context.fetch("github_organization").freeze
-  REPO_NAME = K_CONFIG["context"].freeze
+if (K_CONTEXT = K_CONFIG["contexts"][K_CONFIG["context"]])
+  ORGANIZATION = K_CONTEXT.fetch("github_organization").freeze
+  REPO_NAME = K_CONTEXT["context"].freeze
   INTERNAL_REPO_PATH = "#{ENV.fetch('HOME')}/.k/#{REPO_NAME}".freeze
-  REGISTRY = "#{context.fetch('registry')}/#{context.fetch('registry_namespace')}".freeze
-  KUBECTL_CONTEXT = context.fetch("kubectl_context").freeze
+  REGISTRY = "#{K_CONTEXT.fetch('registry')}/#{K_CONTEXT.fetch('registry_namespace')}".freeze
+  KUBECTL_CONTEXT = K_CONTEXT.fetch("kubectl_context").freeze
   abort("Fatal: couldn't locate gitops repository at #{INTERNAL_REPO_PATH}") unless File.directory?(INTERNAL_REPO_PATH)
 elsif ARGV.include?("contexts:add")
   # Do nothing - we're about to add a context!
@@ -216,7 +216,8 @@ def build_and_push
       -t #{target_image} \\
       --cache-from type=registry,ref=#{docker_repository} \\
       --cache-to type=registry,ref=#{docker_repository} \\
-      --progress plain
+      --progress plain \\
+      --load
   BASH
 
   puts bold "Building with command"
@@ -1495,6 +1496,8 @@ def generate
 end
 
 def generate_application
+  verify_inside_context_repository!
+
   application = ARGV.delete_at(0)
   abort "Must pass name of application to generate, eg. k generate application <application-name>" unless application
   abort "Error: Application name must only contain lower-case alphanumeric characters or '-'" unless application[/^[a-z-]+$/]
@@ -1535,6 +1538,8 @@ def generate_application
 end
 
 def generate_deployment
+  verify_inside_context_repository!
+
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k generate deployment <application>" unless application
 
@@ -1635,6 +1640,8 @@ def generate_deployment
 end
 
 def generate_resource
+  verify_inside_context_repository!
+
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k generate resource <application>" unless application
 
@@ -1750,6 +1757,17 @@ def update
 end
 
 PRIVATE_METHODS_AFTER_COMMANDS = private_methods - PRIVATE_METHODS_BEFORE_COMMANDS
+
+def verify_inside_context_repository!
+  require "uri"
+
+  context_repo = URI(K_CONTEXT.fetch("repository"))
+  current_repo = URI(`git remote get-url origin`.strip)
+
+  unless context_repo.path == current_repo.path
+    abort "Error: this command must be run from a clone of the context repository (#{context_repo})"
+  end
+end
 
 def system_or_die(command)
   system(command) || abort("Unsuccessful exit code while running `#{command}`")
