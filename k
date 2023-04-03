@@ -245,9 +245,22 @@ end
 
 def contexts
   puts "#{gray('===')} #{bold('Contexts')}"
+  puts ""
+
+  longest_name = K_CONFIG.fetch("contexts").keys.max_by(&:length)
+  longest_repo = K_CONFIG.fetch("contexts").values
+    .map { |data| data.fetch("repository").split("/").last(2).join("/") }
+    .max_by(&:length)
+
+  offset_1 = longest_name.length + 2
+  offset_2 = longest_repo.length + 2
+
+  puts gray("Name".ljust(offset_1) + "Repository".ljust(offset_2) + "Kubernetes Context")
   current_context = K_CONFIG.fetch("context")
   K_CONFIG.fetch("contexts").each do |name, data|
-    puts "#{name}#{' *' if name == current_context}"
+    suffix = "  <-" if name == current_context
+    repo = data.fetch("repository").split("/").last(2).join("/")
+    puts name.ljust(offset_1) + repo.ljust(offset_2) + data.fetch("kubectl_context") + bold(suffix.to_s)
   end
 end
 
@@ -1373,7 +1386,8 @@ def sh
       abort "Error: '#{resource_type}' not found among pods, deployments or statefulsets"
     end
 
-  exec "kubectl exec --context #{KUBECTL_CONTEXT} -it #{resource_type}/#{resource} -- sh"
+  command = "sh -c 'which bash > /dev/null && bash || sh'"
+  exec "kubectl exec --context #{KUBECTL_CONTEXT} -it #{resource_type}/#{resource} -- #{command}"
 end
 
 def _exec
