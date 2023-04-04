@@ -6,17 +6,28 @@
 
 Note: A recent version of `ruby` is recommended to run `k`. You may get away with the MacOS default Ruby installation but there are probably commands which won't work correctly. We recommend a version manager such as [rbenv](https://github.com/rbenv/rbenv) to install and use the latest Ruby version. Once things stabilize we'll likely package `k` with a pre-baked Ruby runtime to avoid the dependency.
 
-Via Homebrew:
+**Via Homebrew**
 
 ```
 brew install --HEAD reclaim-the-stack/tap/k
 ```
 
-Without Homebrew:
+**Without Homebrew**
 
 Install the dependencies: [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl), [kail](https://github.com/boz/kail#installing), [kubeseal](https://github.com/bitnami-labs/sealed-secrets#installation) and [yq](https://github.com/mikefarah/yq#install)
 
 Then download the [k](k) file from this repository, make it executable and put it in your PATH.
+
+### Configuration
+
+The first step when using `k` will be to configure a "context". A context is a combination of:
+1. A GitHub repository containing ArgoCD platform and applications manifests
+2. A Kubernetes cluster (ie. a locally configured kubectl context)
+3. A Docker registry + namespace containing Docker images to be deployed as applications
+
+Run `k contexts:add <github-gitops-url>` to add your first context.
+
+Note that `k` stores all its configuration in YAML at `~/.k/config`. Feel free to inspect this file and make changes by hand if you so desire.
 
 ### Usage
 
