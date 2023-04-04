@@ -1552,6 +1552,11 @@ def generate_deployment
   deployment_types = Dir.glob("generators/deployments/*.yaml").map { |path| File.basename(path, ".yaml") }
   abort "Error: no deployment generators found in 'generators/deployments'" if deployment_types.empty?
 
+  # Sort deployments alphabetically, but put web first and other last if present
+  deployment_types.sort!
+  deployment_types.unshift deployment_types.delete("web") if deployment_types.include?("web")
+  deployment_types.push deployment_types.delete("other") if deployment_types.include?("other")
+
   puts "What type of deployment do you wish to generate?"
   deployment_types.each_with_index do |type, index|
     puts "#{index + 1}. #{type.capitalize}"
