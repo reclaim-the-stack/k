@@ -74,7 +74,12 @@ def read_kubectl(command)
 end
 
 def in_argo_repo
+  # Prevent recursive git repo churn
+  return yield if Thread.current[:in_argo_repo] == true
+
   Dir.chdir INTERNAL_REPO_PATH do
+    Thread.current[:in_argo_repo] = true
+
     abort "Error: expected #{INTERNAL_REPO_PATH} to be a git repository" unless File.directory?(".git")
 
     status = `git status --porcelain`
@@ -87,7 +92,11 @@ def in_argo_repo
 
     system "git pull --rebase --quiet"
 
-    yield
+    result = yield
+
+    Thread.current[:in_argo_repo] = false
+
+    result
   end
 end
 
@@ -468,8 +477,8 @@ def dashboard
     },
   )
 
-  # TODO: replace mynewsdesk.dev reference
-  grafana_url = "https://grafana.mynewsdesk.dev/d/Vv9aFgxVk/mynewsdesk-application?#{grafana_query}"
+  domain = detect_deploy_domain("grafana")
+  grafana_url = "https://grafana.#{domain}/d/application/application?#{grafana_query}"
 
   puts "Opening #{grafana_url} ..."
   system "open \"#{grafana_url}\""
@@ -528,8 +537,8 @@ def logs_search
       "range" => { "from" => "now-1h", "to" => "now" },
     }.to_json,
   )
-  # TODO: replace mynewsdesk.dev reference
-  grafana_url = "https://grafana.mynewsdesk.dev/explore?left=#{grafana_query}"
+  domain = detect_deploy_domain("grafana")
+  grafana_url = "https://grafana.#{domain}/explore?left=#{grafana_query}"
 
   puts "Opening #{grafana_url} ..."
   system "open #{grafana_url}"
@@ -1082,10 +1091,10 @@ EOF)
     puts "+++ Tracking deployment progress"
 
     if ENV["BUILDKITE"] == "true"
-      # TODO: replace mynewsdesk.dev reference
+      domain = detect_deploy_domain("argocd")
       system %(
         buildkite-agent annotate \
-        "Track ArgoCD deployment at https://argocd.mynewsdesk.dev/applications/argocd/#{application}" \
+        "Track ArgoCD deployment at https://argocd.#{domain}/applications/argocd/#{application}" \
         --style info
       )
     end
@@ -1219,8 +1228,9 @@ def rollback
 
     puts ""
     puts "Successfully pushed the rollback to version #{selected_release.pretty_sha}."
-    # TODO: replace mynewsdesk.dev reference
-    puts "Follow progress at: https://argocd.mynewsdesk.dev/applications/argocd/#{application}?resource=health%3AProgressing"
+
+    domain = detect_deploy_domain("argocd")
+    puts "Follow progress at: https://argocd.#{domain}/applications/argocd/#{application}?resource=health%3AProgressing"
   end
 end
 
@@ -1619,19 +1629,7 @@ def generate_deployment
   if type == "web"
     require "yaml"
 
-    domain =
-      if File.exist?("platform-applications/cloudflared.yaml")
-        begin
-          YAML.load_file("platform/cloudflared/config.yaml")
-            .fetch("ingress")
-            .find { |ingress| ingress["hostname"].start_with?("argocd") }
-            .then { |ingress| ingress["hostname"].split(".").drop(1).join(".") }
-        rescue StandardError
-          "example.com"
-        end
-      else
-        "example.com"
-      end
+    domain = detect_deploy_domain
 
     puts ""
     puts "To expose the deployment to the internet add an entry to the ingress section in:"
@@ -1822,6 +1820,23 @@ def lookup_latest_releases(application)
       subject: subject.delete_prefix("#{application}: "),
       body: body,
     )
+  end
+end
+
+def detect_deploy_domain(primary_subdomain = "argocd")
+  in_argo_repo do
+    if File.exist?("platform-applications/cloudflared.yaml")
+      begin
+        YAML.load_file("platform/cloudflared/config.yaml")
+          .fetch("ingress")
+          .find { |ingress| ingress["hostname"].start_with?(primary_subdomain) }
+          .then { |ingress| ingress["hostname"].split(".").drop(1).join(".") }
+      rescue StandardError
+        "example.com"
+      end
+    else
+      "example.com"
+    end
   end
 end
 
