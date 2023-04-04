@@ -70,7 +70,7 @@ def kubectl(command)
 end
 
 def read_kubectl(command)
-  `kubectl --context #{KUBECTL_CONTEXT} #{command}`
+  `kubectl --context #{KUBECTL_CONTEXT} #{command.strip}` # strip to allow leading newline
 end
 
 def in_argo_repo
@@ -227,9 +227,7 @@ def build_and_push
   system_or_die command
   puts ""
 
-  command = <<~BASH
-    docker push #{target_image}
-  BASH
+  command = "docker push #{target_image} && docker push #{docker_repository}:latest"
   puts bold "Pushing with command"
   puts command
   system_or_die command
@@ -1060,7 +1058,6 @@ def deploy
 
     system_or_die %(yq -i ".appVersion = \\"#{git_sha}\\"" #{chart_yaml_path})
     system_or_die %(yq -i ".image = \\"#{new_image}\\"" #{values_yaml_path})
-    system_or_die %(yq -i ".lastChange = \\"Deploy #{git_sha}\\"" #{values_yaml_path})
 
     puts "--- Pushing changes to gitops repo"
 
@@ -1638,7 +1635,7 @@ def generate_deployment
 
     puts ""
     puts "To expose the deployment to the internet add an entry to the ingress section in:"
-    puts bold("infrastructure/cloudflared/config-map.yaml")
+    puts bold("platform/cloudflared/config.yaml")
     puts ""
     puts "Example:"
     puts "- hostname: #{application}.#{domain}"
