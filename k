@@ -26,7 +26,7 @@ K_CONFIG = YAML.load_file(K_CONFIG_FILE)
 
 if (K_CONTEXT = K_CONFIG["contexts"][K_CONFIG["context"]])
   ORGANIZATION = K_CONTEXT.fetch("github_organization").freeze
-  REPO_NAME = K_CONTEXT["context"].freeze
+  REPO_NAME = K_CONFIG["context"].freeze
   INTERNAL_REPO_PATH = "#{ENV.fetch('HOME')}/.k/#{REPO_NAME}".freeze
   REGISTRY = "#{K_CONTEXT.fetch('registry')}/#{K_CONTEXT.fetch('registry_namespace')}".freeze
   KUBECTL_CONTEXT = K_CONTEXT.fetch("kubectl_context").freeze
@@ -75,6 +75,8 @@ end
 
 def in_argo_repo
   Dir.chdir INTERNAL_REPO_PATH do
+    abort "Error: expected #{INTERNAL_REPO_PATH} to be a git repository" unless File.directory?(".git")
+
     status = `git status --porcelain`
 
     dirty = !!status.lines.find do |line|
