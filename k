@@ -1637,7 +1637,7 @@ def generate_deployment
     puts ""
     puts "Example:"
     puts "- hostname: #{application}.#{domain}"
-    puts "  service: http://#{application}-web:3000"
+    puts "  service: http://#{application}-web"
   end
 end
 
