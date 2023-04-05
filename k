@@ -889,24 +889,22 @@ def config
       env.merge!(secret_env)
     end
 
-    if (values_env = values["env"])
-      values_env.each do |env_entry|
-        name = env_entry.fetch("name")
-        if (value = env_entry["value"])
-          env[name] = { value: value, source: "values.yaml" }
-        elsif (value_from = env_entry["valueFrom"])
-          if (secret_ref = value_from["secretKeyRef"])
-            secret_name = secret_ref.fetch("name")
-            secret_key = secret_ref.fetch("key")
-            secret = YAML.safe_load read_kubectl("get secret #{secret_name} -o yaml")
-            value = Base64.strict_decode64(secret.fetch("data").fetch(secret_key))
-            env[name] = { value: value, source: "values.yaml ref: #{secret_name}.#{secret_key}" }
-          else
-            raise "not sure how to parse env entry in #{values_path}: #{env_entry}"
-          end
+    Array(values["env"]).each do |env_entry|
+      name = env_entry.fetch("name")
+      if (value = env_entry["value"])
+        env[name] = { value: value, source: "values.yaml" }
+      elsif (value_from = env_entry["valueFrom"])
+        if (secret_ref = value_from["secretKeyRef"])
+          secret_name = secret_ref.fetch("name")
+          secret_key = secret_ref.fetch("key")
+          secret = YAML.safe_load read_kubectl("get secret #{secret_name} -o yaml")
+          value = Base64.strict_decode64(secret.fetch("data").fetch(secret_key))
+          env[name] = { value: value, source: "values.yaml ref: #{secret_name}.#{secret_key}" }
         else
           raise "not sure how to parse env entry in #{values_path}: #{env_entry}"
         end
+      else
+        raise "not sure how to parse env entry in #{values_path}: #{env_entry}"
       end
     end
 
@@ -928,6 +926,25 @@ def config
       puts ""
     end
     puts output
+
+    Hash(values["deployments"]).each do |deployment_name, deployment|
+      deployment_env = Array deployment["env"]
+      next if deployment_env.empty?
+
+      deployment_env.sort_by! { |entry| entry.fetch("name") }
+      output = deployment_env.map do |entry|
+        name = entry.fetch("name")
+        value = entry["value"] || entry["valueFrom"]
+        "#{green(name)}: #{value.to_yaml.delete_prefix('--- ').chomp} #{gray('# values.yaml')}"
+      end
+
+      output = output.grep(Regexp.new(grep_string)) if grep_string
+      next if output.empty?
+
+      puts ""
+      puts "#{deployment_name.capitalize} deployment overrides:"
+      puts output
+    end
   end
 end
 
