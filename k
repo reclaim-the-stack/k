@@ -1450,8 +1450,7 @@ def playground
 
   require "securerandom"
 
-  # TODO: Move to reclaim-the-stack docker registry
-  image = "mynewsdesk/utils:20230206-154225"
+  image = "reclaimthestack/playground:20230206-154225"
   exec %(
     kubectl --context #{KUBECTL_CONTEXT} run playground-#{SecureRandom.hex(3)} -it --restart=Never --rm --image #{image} \
     --overrides='
