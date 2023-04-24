@@ -1327,7 +1327,7 @@ def secrets_edit
     original_secret["data"] = data
 
     File.write(tmp_file, original_secret.to_yaml)
-    system "kubeseal -f #{tmp_file} -o yaml > #{shared_secret_path}"
+    system "kubeseal --context #{KUBECTL_CONTEXT} -f #{tmp_file} -o yaml > #{shared_secret_path}"
     File.delete tmp_file
 
     changed_variables = new_env.keys.select do |name|
@@ -1387,7 +1387,7 @@ def secrets_create
     }.to_yaml
 
     File.write tmp_file, secret_yaml
-    system_or_die "kubeseal -f #{tmp_file} -o yaml > #{secret_path}"
+    system_or_die "kubeseal --context #{KUBECTL_CONTEXT} -f #{tmp_file} -o yaml > #{secret_path}"
     File.delete tmp_file
 
     system_or_die "git add #{secret_path}"
@@ -1474,7 +1474,7 @@ def env_to_secret
     puts "heroku config -s -a <app> > app.env"
     puts ""
     puts "Now generate Kubernetes secrets / sealed secrets as desired:"
-    puts "k env-to-secret app.env <secret-name> | kubeseal -o yaml > applications/shared-secrets/<secret-name>.yaml"
+    puts "k env-to-secret app.env <secret-name> | kubeseal --context #{KUBECTL_CONTEXT} -o yaml > applications/shared-secrets/<secret-name>.yaml"
     exit
   end
   abort "Error: Could not locate an ENV file at '#{env_path}'" unless File.exist?(env_path)
