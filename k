@@ -31,8 +31,8 @@ if (K_CONTEXT = K_CONFIG["contexts"][K_CONFIG["context"]])
   REGISTRY = "#{K_CONTEXT.fetch('registry')}/#{K_CONTEXT.fetch('registry_namespace')}".freeze
   KUBECTL_CONTEXT = K_CONTEXT.fetch("kubectl_context").freeze
   abort("Fatal: couldn't locate gitops repository at #{INTERNAL_REPO_PATH}") unless File.directory?(INTERNAL_REPO_PATH)
-elsif ARGV.include?("contexts:add")
-  # Do nothing - we're about to add a context!
+elsif ARGV.first.to_s.start_with?("contexts")
+  # Do nothing - we're about to add / list or use a context!
 elsif K_CONFIG["contexts"].empty?
   puts "Warning: no contexts configured. Please run `k contexts:add <github-repository>` to configure a context"
 else
@@ -1450,6 +1450,8 @@ def playground
 
   require "securerandom"
 
+
+
   image = "reclaimthestack/playground:20230206-154225"
   exec %(
     kubectl --context #{KUBECTL_CONTEXT} run playground-#{SecureRandom.hex(3)} -it --restart=Never --rm --image #{image} \
@@ -1458,7 +1460,8 @@ def playground
         "apiVersion": "v1",
         "spec": {
           "nodeSelector": { "kubernetes.io/hostname": "#{node_hostname}" },
-          "tolerations": [{ "operator": "Exists" }]
+          "tolerations": [{ "operator": "Exists" }],
+          "hostNetwork": true
         }
       }
     ' -- bash
