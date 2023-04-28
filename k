@@ -4,6 +4,7 @@
 # - pbcopy doesn't work on linux
 
 require "yaml"
+require "tmpdir"
 
 # rubocop:disable Style/StringConcatenation
 
@@ -299,7 +300,7 @@ def contexts_add
 
   # Verify that we have read access to the repository
   tmp_repo_path = "/#{Dir.tmpdir}/k-context-add-#{Time.now.to_i}"
-  unless system "git clone #{repository_url} -q #{tmp_repo_path} &> /dev/null"
+  unless system "git clone #{repository_url} -q #{tmp_repo_path}"
     abort "Error: could not clone repository #{repository_url}"
   end
 
@@ -309,7 +310,7 @@ def contexts_add
       test_branch_name = "write-access-test-#{Time.now.to_i}"
       system "git branch #{test_branch_name}"
       write_access = system "git push origin #{test_branch_name} -q &> /dev/null"
-      system "git push -d origin #{test_branch_name} -q &> /dev/null" if write_access
+      system "git push -d origin #{test_branch_name} -q" if write_access
       write_access
     end
   FileUtils.rm_rf tmp_repo_path
