@@ -300,7 +300,7 @@ def contexts_add
   # Verify that we have read access to the repository
   tmp_repo_path = "/#{Dir.tmpdir}/k-context-add-#{Time.now.to_i}"
   unless system "git clone #{repository_url} -q #{tmp_repo_path} &> /dev/null"
-    abort "Error: could clone repository #{repository_url}"
+    abort "Error: could not clone repository #{repository_url}"
   end
 
   # Verify that we have write access to the repository
