@@ -298,7 +298,7 @@ def contexts_add
   puts "Verifying access to #{repository_url}..."
 
   # Verify that we have read access to the repository
-  tmp_repo_path = "/tmp/k-context-add-#{Time.now.to_i}"
+  tmp_repo_path = "/#{Dir.tmpdir}/k-context-add-#{Time.now.to_i}"
   unless system "git clone #{repository_url} -q #{tmp_repo_path} &> /dev/null"
     abort "Error: could clone repository #{repository_url}"
   end
@@ -1150,7 +1150,7 @@ def env_edit
     original_env = values.slice("envFrom", "env")
 
     # Write temporary file and launch editor
-    tmp_file = "/tmp/#{application}.yaml"
+    tmp_file = "/#{Dir.tmpdir}/#{application}.yaml"
     File.write tmp_file, original_env.to_yaml.delete_prefix("---\n")
     system "#{ENV.fetch('EDITOR')} #{tmp_file}"
 
@@ -1311,7 +1311,7 @@ def secrets_edit
     original_env = original_secret.fetch("data").transform_values(&Base64.method(:strict_decode64))
 
     # Write temporary file and launch editor
-    tmp_file = "/tmp/#{shared_secret}.yaml"
+    tmp_file = "/#{Dir.tmpdir}/#{shared_secret}.yaml"
     File.write tmp_file, original_env.to_yaml.delete_prefix("---\n")
     system "#{ENV.fetch('EDITOR')} #{tmp_file}"
 
@@ -1362,7 +1362,7 @@ def secrets_create
       abort "Error: A secret named '#{secret}' already exists, run 'k secrets:edit #{secret}' to edit it"
     end
 
-    tmp_file = "/tmp/#{secret}.yaml"
+    tmp_file = "/#{Dir.tmpdir}/#{secret}.yaml"
     File.write(
       tmp_file,
       <<~YAML,
