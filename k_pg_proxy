@@ -173,7 +173,7 @@ def forward(from_socket, to_socket)
   loop do
     data = from_socket.recv(1024)
     return if data.nil?
-    return if data.include? "X\x00\x00\x00\x04" # Terminate message
+    return if data == "X\x00\x00\x00\x04" # Terminate message
 
     to_socket.send(data, 0)
   rescue Errno::ECONNRESET, IOError => e
