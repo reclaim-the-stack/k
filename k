@@ -1451,8 +1451,6 @@ def playground
 
   require "securerandom"
 
-
-
   image = "reclaimthestack/playground:20230206-154225"
   exec %(
     kubectl --context #{KUBECTL_CONTEXT} run playground-#{SecureRandom.hex(3)} -it --restart=Never --rm --image #{image} \
@@ -1461,8 +1459,7 @@ def playground
         "apiVersion": "v1",
         "spec": {
           "nodeSelector": { "kubernetes.io/hostname": "#{node_hostname}" },
-          "tolerations": [{ "operator": "Exists" }],
-          "hostNetwork": true
+          "tolerations": [{ "operator": "Exists" }]
         }
       }
     ' -- bash
