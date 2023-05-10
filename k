@@ -122,8 +122,10 @@ def print_commands
   puts "k logs <application> [<type1>, <type2>...]" + gray(" tail application logs")
   puts "k logs:search <application> [<regexp-query>]" + gray(" search application logs via grafana")
   puts "k pg" + gray(" list postgres related commands")
-  puts "k redis:cli <application>" + gray(" run redis-cli on redis for an application")
-  puts "k redis:failover <application>" + gray(" run FAILOVER command on the current master instance")
+  puts "k redis:cli <cluster-name>" + gray(" run redis-cli on redis for a redis cluster")
+  puts "k redis:failover <cluster-name>" + gray(" run FAILOVER command on the current master instance")
+  puts "k redis:url <cluster-name>" + gray(" output the internal URL for a redis cluster")
+  puts "k redis:sentinel-url <cluster-name>" + gray(" output the internal sentinel URL for a redis cluster")
   puts "k releases <application>" + gray(" lists the past 15 releases for an application")
   puts "k rollback <application>" + gray(" show prompt to rollback an application")
   puts "k run <application> <command>" + gray(" run a command using a one off pod")
@@ -582,7 +584,7 @@ def pg
   puts "pg:proxy" + gray(" connect to any Kubernetes Postgres instance via localhost")
   puts "pg:psql <cluster-name>"
   puts "pg:resources <cluster-name>"
-  puts "pg:uri <cluster-name>"
+  puts "pg:url <cluster-name>"
   puts ""
   puts "POSTGRES DIAGNOSTICS:"
   puts "pg:bloat <cluster-name>"
@@ -664,9 +666,9 @@ def pg_resources
   kubectl "get secrets --selector=postgres-operator.crunchydata.com/cluster=#{cluster}"
 end
 
-def pg_uri
+def pg_url
   cluster = ARGV.delete_at(0)
-  abort "Must pass name of cluster, eg. k pg:uri <cluster-name>" unless cluster
+  abort "Must pass name of cluster, eg. k pg:url <cluster-name>" unless cluster
 
   require "json"
   require "base64"
@@ -1103,6 +1105,10 @@ def deploy
     new_image = "#{REGISTRY}/#{repository}:sha-#{git_sha}"
 
     puts "Verifying existence of image: #{new_image}"
+    # TODO: manifest inspect is unreliable, we should use the registry API instead
+    # eg. curl -I https://hub.docker.com/v2/repositories/reclaimthestack/rails-example/tags/latest
+    # curl -s -H "Content-Type: application/json" -X POST -d '{"username": "reclaimthestack", "password": "..."}' https://hub.docker.com/v2/users/login/ | jq .token
+    # curl -I -H "Authorization: Bearer <token>" https://hub.docker.com/v2/repositories/reclaimthestack/private-test/tags/latest
     1.upto(60) do |second|
       # NOTE: we have seen docker manifest inspect fail randomly even when the image exists, possibly a bug in the registry
       break if system "docker manifest inspect #{new_image} > /dev/null"
@@ -1767,17 +1773,17 @@ def generate_resource
 end
 
 def redis_cli
-  application = ARGV.delete_at(0)
-  abort "Must pass name of application, eg. k redis-cli <application>" unless application
+  redis_cluster = ARGV.delete_at(0)
+  abort "Must pass name of redis-cluster, eg. k redis:cli <cluster-name>" unless redis_cluster
 
   require "yaml"
 
-  endpoint_yaml = read_kubectl "get endpoints/#{application}-redis-master -o yaml"
-  abort "Error: no master endpoint found for #{application} (looked for #{application}-redis-master)" if endpoint_yaml.empty?
+  endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-redis-master -o yaml"
+  abort "Error: no master endpoint found for #{redis_cluster} (looked for #{redis_cluster}-redis-master)" if endpoint_yaml.empty?
 
   endpoint = YAML.safe_load(endpoint_yaml)
   master_pod = endpoint.dig("subsets", 0, "addresses", 0, "targetRef", "name")
-  abort "Error: no master pod name found in endpoint YAML for #{application}-redis-master" unless master_pod
+  abort "Error: no master pod name found in endpoint YAML for #{redis_cluster}-redis-master" unless master_pod
 
   puts "Running redis-cli on #{master_pod}..."
   kubectl "exec -c redis -it #{master_pod} -- redis-cli"
@@ -1785,17 +1791,17 @@ end
 
 # TODO: This should use sentinel failover instead of redis failover
 def redis_failover
-  application = ARGV.delete_at(0)
-  abort "Must pass name of application, eg. k failover <application>" unless application
+  redis_cluster = ARGV.delete_at(0)
+  abort "Must pass name of redis cluster, eg. k redis:failover <cluster-name>" unless redis_cluster
 
   require "yaml"
 
-  endpoint_yaml = read_kubectl "get endpoints/#{application}-redis-master -o yaml"
-  abort "Error: no master endpoint found for #{application} (looked for #{application}-redis-master)" if endpoint_yaml.empty?
+  endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-redis-master -o yaml"
+  abort "Error: no master endpoint found for #{redis_cluster} (looked for #{redis_cluster}-redis-master)" if endpoint_yaml.empty?
 
   endpoint = YAML.safe_load(endpoint_yaml)
   master_pod = endpoint.dig("subsets", 0, "addresses", 0, "targetRef", "name")
-  abort "Error: no master pod name found in endpoint YAML for #{application}-redis-master" unless master_pod
+  abort "Error: no master pod name found in endpoint YAML for #{redis_cluster}-redis-master" unless master_pod
 
   puts "Running redis-cli with FAILOVER command on #{master_pod}..."
   kubectl "exec -c redis -it #{master_pod} -- redis-cli FAILOVER"
@@ -1805,6 +1811,26 @@ def redis_failover
     kubectl "exec -c redis -it #{master_pod} -- redis-cli CLIENT KILL TYPE normal"
     sleep 1
   end
+end
+
+def redis_url
+  redis_cluster = ARGV.delete_at(0)
+  abort "Must pass name of redis cluster, eg. k redis:url <cluster-name>" unless redis_cluster
+
+  endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-redis-master -o yaml"
+  abort "Error: no master endpoint found for #{redis_cluster} (looked for #{redis_cluster}-redis-master)" if endpoint_yaml.empty?
+
+  puts "redis://#{redis_cluster}-redis-master.default.svc:6379"
+end
+
+def redis_sentinel_url
+  redis_cluster = ARGV.delete_at(0)
+  abort "Must pass name of redis cluster, eg. k redis:sentinel-url <cluster-name>" unless redis_cluster
+
+  endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-redis-master -o yaml"
+  abort "Error: no master endpoint found for #{redis_cluster} (looked for #{redis_cluster}-redis-master)" if endpoint_yaml.empty?
+
+  puts "redis-sentinel://rfs-#{redis_cluster}.default.svc:26379/mymaster"
 end
 
 def update
