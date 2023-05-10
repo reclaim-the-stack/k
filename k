@@ -117,6 +117,7 @@ def print_commands
   puts "k deploy <application>" + gray(" deploy docker image to an application (run from repo/branch you want to deploy)")
   puts "k env-to-secret <env-file> <secret-name>"
   puts "k generate" + gray(" list generate commands for creating / adding resources to applications")
+  puts "k k <kubectl-arguments>" + gray(" run kubectl with the configured context applied")
   puts "k kibana <application>" + gray(" access kibana from an elastic search enabled application")
   puts "k logs <application> [<type1>, <type2>...]" + gray(" tail application logs")
   puts "k logs:search <application> [<regexp-query>]" + gray(" search application logs via grafana")
@@ -485,6 +486,18 @@ def dashboard
   system "open \"#{grafana_url}\""
 end
 
+def k
+  if ARGV.empty?
+    puts "DESCRIPTION:"
+    puts "The k command runs kubectl with the current k context applied"
+    puts ""
+    puts "EXAMPLE:"
+    puts "k k get pods"
+  else
+    kubectl(ARGV.join(" "))
+  end
+end
+
 def logs
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k logs <application> [<type1>, <type2>...]" unless application
@@ -563,6 +576,7 @@ def pg
   puts "POSTGRES COMMANDS:"
   puts "pg:failover <cluster-name>"
   puts "pg:patroni <cluster-name> <patroni-command>"
+  puts "pg:password <cluster-name> [<username>]"
   puts "pg:pods"
   puts "pg:primaries"
   puts "pg:proxy" + gray(" connect to any Kubernetes Postgres instance via localhost")
@@ -593,6 +607,24 @@ def pg_patroni
   patroni_command = ARGV.delete_at(0) || "--help"
 
   Pg.exec_on_primary(cluster, "patronictl #{patroni_command}")
+end
+
+def pg_password
+  cluster = ARGV.delete_at(0)
+  abort "Must pass name of cluster, eg. k pg:password <cluster-name> [<user>]" unless cluster
+
+  user = ARGV.delete_at(0) || cluster
+
+  require "json"
+  require "base64"
+
+  secret = read_kubectl("get secret #{cluster}-pguser-#{user} -o json")
+  abort "Error: cluster secret not found, did you specify the cluster name correctly?" if secret.empty?
+
+  data = JSON.parse(secret).fetch("data")
+  password = Base64.strict_decode64(data.fetch("password"))
+
+  puts password
 end
 
 def pg_pods
