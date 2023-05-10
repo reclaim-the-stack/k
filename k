@@ -115,6 +115,7 @@ def print_commands
   puts "k console <application>" + gray(" start a rails console on an application")
   puts "k dashboard <application>" + gray(" opens application dashboard in grafana")
   puts "k deploy <application>" + gray(" deploy docker image to an application (run from repo/branch you want to deploy)")
+  puts "k elasticsearch:url <cluster-name>" + gray(" output the internal URL for an elasticsearch cluster")
   puts "k env-to-secret <env-file> <secret-name>"
   puts "k generate" + gray(" list generate commands for creating / adding resources to applications")
   puts "k k <kubectl-arguments>" + gray(" run kubectl with the configured context applied")
@@ -1171,6 +1172,20 @@ EOF)
       sleep 1
     end
   end
+end
+
+def elasticsearch_url
+  elasticsearch_cluster = ARGV.delete_at(0)
+  abort "Must pass name of elasticsearch cluster, eg. k elasticsearch:url <cluster-name>" unless elasticsearch_cluster
+
+  require "json"
+  require "base64"
+
+  secret = read_kubectl("get secret #{elasticsearch_cluster}-es-elastic-user -o json")
+  password = JSON.parse(secret).fetch("data").fetch("elastic")
+  decoded_password = Base64.strict_decode64(password)
+
+  puts "http://elastic:#{decoded_password}@#{elasticsearch_cluster}-es-http:9200"
 end
 
 # NOTE: Not ready for use yet, we'll encourage manual editing of values.yaml for now
