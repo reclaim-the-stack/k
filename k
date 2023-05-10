@@ -1549,7 +1549,7 @@ def generate
     puts "GENERATORS:"
     puts "k generate application <application-name>" + gray(" generates a new application")
     puts "k generate deployment <application-name>" + gray(" generates a deployment for an application (web, sidekiq etc)")
-    puts "k generate resource <application-name>" + gray(" generates a resource for an application (postgres, redis etc)")
+    puts "k generate resource <application-name> [<resource-type]" + gray(" generates a resource for an application (postgres, redis etc)") # rubocop:disable Layout/LineLength
   end
 end
 
@@ -1705,13 +1705,20 @@ def generate_resource
   resource_types = Dir.glob("generators/resources/*.yaml").map { |path| File.basename(path, ".yaml") }
   abort "Error: no deployment generators found in 'generators/deployments'" if resource_types.empty?
 
-  puts "What type of deployment do you wish to generate?"
-  resource_types.each_with_index do |type, index|
-    puts "#{index + 1}. #{type.capitalize}"
+  type = ARGV.delete_at(0)
+  if type && !resource_types.include?(type)
+    abort "the resource type provided '#{type}' is not valid, must be one of #{resource_types.join(', ')}"
   end
-  selection = readline.to_i
-  abort "Error: invalid selection" unless (1..resource_types.length).include?(selection)
-  type = resource_types[selection - 1]
+
+  unless type
+    puts "What type of deployment do you wish to generate?"
+    resource_types.each_with_index do |type, index|
+      puts "#{index + 1}. #{type.capitalize}"
+    end
+    selection = readline.to_i
+    abort "Error: invalid selection" unless (1..resource_types.length).include?(selection)
+    type = resource_types[selection - 1]
+  end
 
   name = type
 
