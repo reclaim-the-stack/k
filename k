@@ -1,8 +1,5 @@
 #!/usr/bin/env ruby
 
-# Known issues:
-# - pbcopy doesn't work on linux
-
 require "yaml"
 require "tmpdir"
 
@@ -434,10 +431,6 @@ def kibana
   # common.k8s.elastic.co/type=kibana
   # kibana.k8s.elastic.co/name=mynewsdesk-funnel
 
-  puts "Storing kibana password in clipboard..."
-  kubectl "get secret #{application}-es-elastic-user --template={{.data.elastic}} | base64 -D | pbcopy"
-  puts ""
-
   require "socket"
 
   5601.upto(5700) do |port|
@@ -445,7 +438,17 @@ def kibana
     next if TCPSocket.new("127.0.0.1", port).close.nil? rescue false # rubocop:disable Style/RescueModifier
 
     puts "Making kibana accessible at: http://localhost:#{port}/app/monitoring#/overview"
-    puts "Login with username 'elastic' and paste the password from your clipboard"
+    if system "which pbcopy > /dev/null 2>&1"
+      puts "Storing kibana password in clipboard..."
+      puts ""
+      kubectl "get secret #{application}-es-elastic-user --template={{.data.elastic}} | base64 -d | pbcopy"
+      puts "Login with username 'elastic' and paste the password from your clipboard"
+    else
+      require "base64"
+      base64_password = read_kubectl "get secret #{application}-es-elastic-user --template={{.data.elastic}}"
+      password = Base64.decode64(base64_password)
+      puts "Login with username 'elastic' and paste the password '#{password}'"
+    end
     puts ""
     kubectl "port-forward service/#{application}-kb-http #{port}:5601"
   end
