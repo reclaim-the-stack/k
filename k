@@ -1083,12 +1083,24 @@ def config_get
 end
 
 def deploy
+  if ARGV.empty?
+    puts "DESCRIPTION:"
+    puts "The k deploy command deploys a Docker image to an application in Kubernetes by modifying the image attribute in the applications values.yaml file. If no git-sha is provided, the current git-sha of the current working directory is used. By default the command will verify that the image exists in the docker registry before proceeding, this doesn't appear to work with all docker registries and can be disabled with the --disable-image-verification flag." # rubocop:disable Layout/LineLength
+    puts ""
+    puts "USAGE:"
+    puts "k deploy <application> [<git-sha>] [--disable-image-verification]"
+    puts ""
+    puts "EXAMPLE:"
+    puts "k deploy <application>" + gray(" deploys the current <git-sha> of the current working directory to <application>")
+    puts "k deploy <application> <git-sha>" + gray(" deploys an image with the given <git-sha> to <application>")
+    puts "k deploy <application> --disable-image-verification" + gray(" deploys without verifying the docker image exist")
+    exit
+  end
+
+  disable_image_verification = ARGV.delete("--disable-image-verification")
   application = ARGV.delete_at(0)
-  abort "Must pass name of application, eg. k deploy <application>" unless application
 
   git_sha = ARGV.delete_at(0)
-  puts "Deprecation Warning: explicit git SHA argument has been removed in favour of using the current git context" if git_sha
-
   git_sha = `git rev-parse HEAD`.chomp
   abort "Error: couldn't fetch git-sha from current working dir, not in a git directory?" if git_sha.empty?
 
@@ -1108,19 +1120,21 @@ def deploy
     repository, _tag = image.split("/").last.split(":")
     new_image = "#{REGISTRY}/#{repository}:sha-#{git_sha}"
 
-    puts "Verifying existence of image: #{new_image}"
-    # TODO: manifest inspect is unreliable, we should use the registry API instead
-    # eg. curl -I https://hub.docker.com/v2/repositories/reclaimthestack/rails-example/tags/latest
-    # curl -s -H "Content-Type: application/json" -X POST -d '{"username": "reclaimthestack", "password": "..."}' https://hub.docker.com/v2/users/login/ | jq .token
-    # curl -I -H "Authorization: Bearer <token>" https://hub.docker.com/v2/repositories/reclaimthestack/private-test/tags/latest
-    1.upto(60) do |second|
-      # NOTE: we have seen docker manifest inspect fail randomly even when the image exists, possibly a bug in the registry
-      break if system "docker manifest inspect #{new_image} > /dev/null"
+    unless disable_image_verification
+      puts "Verifying existence of image: #{new_image}"
+      # TODO: manifest inspect is unreliable, we could try using the registry API instead
+      # eg. curl -I https://hub.docker.com/v2/repositories/reclaimthestack/rails-example/tags/latest
+      # curl -s -H "Content-Type: application/json" -X POST -d '{"username": "reclaimthestack", "password": "..."}' https://hub.docker.com/v2/users/login/ | jq .token
+      # curl -I -H "Authorization: Bearer <token>" https://hub.docker.com/v2/repositories/reclaimthestack/private-test/tags/latest
+      1.upto(60) do |second|
+        # NOTE: we have seen docker manifest inspect fail randomly even when the image exists, possibly a bug in the registry
+        break if system "docker manifest inspect #{new_image} > /dev/null"
 
-      abort "Error: Timed out waiting for #{new_image}, maybe something's wrong with the docker build?" if second == 60
+        abort "Error: Timed out waiting for #{new_image}, maybe something's wrong with the docker build?" if second == 60
 
-      print "."
-      sleep 1
+        print "."
+        sleep 1
+      end
     end
 
     puts "--- Updating Helm chart image and app version"
