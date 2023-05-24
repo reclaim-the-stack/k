@@ -1370,6 +1370,7 @@ def secrets_edit
   shared_secret = ARGV.delete_at(0)
   abort "Must pass name of secret, eg. k secrets:edit <shared-secret-name>" unless shared_secret
   abort "Missing $EDITOR environment variable, eg: export EDITOR='code --wait --new-window'" unless ENV.key?("EDITOR")
+  abort "Must have kubeseal installed" unless system "which kubeseal > /dev/null"
 
   in_argo_repo do
     shared_secret_path = "applications/shared-secrets/#{shared_secret}.yaml"
@@ -1398,7 +1399,7 @@ def secrets_edit
     original_secret["data"] = data
 
     File.write(tmp_file, original_secret.to_yaml)
-    system "kubeseal --context #{KUBECTL_CONTEXT} -f #{tmp_file} -o yaml > #{shared_secret_path}"
+    system_or_die "kubeseal --context #{KUBECTL_CONTEXT} -f #{tmp_file} -o yaml > #{shared_secret_path}"
     File.delete tmp_file
 
     changed_variables = new_env.keys.select do |name|
@@ -1423,6 +1424,7 @@ def secrets_create
   secret = ARGV.delete_at(0)
   abort "Must pass name of the new secret, eg. k secrets:create <secret-name>" unless secret
   abort "Missing $EDITOR environment variable, eg: export EDITOR='code --wait --new-window'" unless ENV.key?("EDITOR")
+  abort "Must have kubeseal installed" unless system "which kubeseal > /dev/null"
 
   require "yaml"
   require "base64"
