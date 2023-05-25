@@ -1085,7 +1085,7 @@ end
 def deploy
   if ARGV.empty?
     puts "DESCRIPTION:"
-    puts "The k deploy command deploys a Docker image to an application in Kubernetes by modifying the image attribute in the applications values.yaml file. If no git-sha is provided, the current git-sha of the current working directory is used. By default the command will verify that the image exists in the docker registry before proceeding, this doesn't appear to work with all docker registries and can be disabled with the --disable-image-verification flag." # rubocop:disable Layout/LineLength
+    puts "The k deploy command deploys a Docker image to an application in Kubernetes by modifying the image attribute in the applications values.yaml file. Should be run from the application git repository. If no explicit git-sha is provided, the current git-sha of the current working directory is used. By default the command will verify that the image exists in the docker registry before proceeding, this doesn't appear to work with all docker registries and can be disabled with the --disable-image-verification flag." # rubocop:disable Layout/LineLength
     puts ""
     puts "USAGE:"
     puts "k deploy <application> [<git-sha>] [--disable-image-verification]"
@@ -1100,13 +1100,16 @@ def deploy
   disable_image_verification = ARGV.delete("--disable-image-verification")
   application = ARGV.delete_at(0)
 
-  git_sha = ARGV.delete_at(0)
-  git_sha = `git rev-parse HEAD`.chomp
+  git_sha = ARGV.delete_at(0) || `git rev-parse HEAD`.chomp
   abort "Error: couldn't fetch git-sha from current working dir, not in a git directory?" if git_sha.empty?
 
   commit_author = `git log -1 --pretty=%an`.chomp
   commit_email = `git log -1 --pretty=%ae`.chomp
   commit_subject = `git log -1 --pretty=%s`.chomp
+
+  if commit_author.empty? || commit_email.empty? || commit_subject.empty?
+    abort "Error: couldn't fetch git commit meta-data, not in a git directory?"
+  end
 
   in_argo_repo do
     chart_yaml_path = "applications/#{application}/Chart.yaml"
