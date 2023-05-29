@@ -537,8 +537,6 @@ def logs_search
   deployments = JSON.parse(deployments_json).fetch("items")
   abort "Couldn't find any deployments for the application #{application}" if deployments.empty?
 
-
-
   deployment_names = deployments.map { |deployment| deployment.fetch("metadata").fetch("name") }
 
   grafana_query = URI.encode_www_form_component(
