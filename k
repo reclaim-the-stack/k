@@ -2,6 +2,7 @@
 
 require "yaml"
 require "tmpdir"
+require "uri"
 
 # rubocop:disable Style/StringConcatenation
 
@@ -24,6 +25,7 @@ K_CONFIG = YAML.load_file(K_CONFIG_FILE)
 
 if (K_CONTEXT = K_CONFIG["contexts"][K_CONFIG["context"]])
   ORGANIZATION = K_CONTEXT.fetch("github_organization").freeze
+  GIT_HOST  = URI(K_CONTEXT.fetch('repository')).host.freeze
   REPO_NAME = K_CONFIG["context"].freeze
   INTERNAL_REPO_PATH = "#{ENV.fetch('HOME')}/.k/#{REPO_NAME}".freeze
   REGISTRY = "#{K_CONTEXT.fetch('registry')}/#{K_CONTEXT.fetch('registry_namespace')}".freeze
@@ -32,7 +34,7 @@ if (K_CONTEXT = K_CONFIG["contexts"][K_CONFIG["context"]])
 elsif ARGV.first.to_s.start_with?("contexts")
   # Do nothing - we're about to add / list or use a context!
 elsif K_CONFIG["contexts"].empty?
-  puts "Warning: no contexts configured. Please run `k contexts:add <github-repository>` to configure a context"
+  puts "Warning: no contexts configured. Please run `k contexts:add <github/gitlab-repository>` to configure a context"
 else
   puts "Error: your configured context '#{K_CONFIG['context']}' didn't match any existing contexts"
   puts "Run `k contexts` to see a list of available contexts and `k contexts:use <context>` to switch contexts"
@@ -106,7 +108,7 @@ def print_commands
   puts "k config:edit <application>" + gray(" edit ENV vars on an application")
   puts "k config:get <application> <env-var>" + gray(" prints a single environment variable value for an application")
   puts "k contexts" + gray(" list available contexts")
-  puts "k contexts:add <github-repository>" + gray(" add a new context")
+  puts "k contexts:add <github/gitlab-repository>" + gray(" add a new context")
   puts "k contexts:use <context>" + gray(" switch to a different context")
   puts "k contexts:remove <context>" + gray(" remove a context")
   puts "k console <application>" + gray(" start a rails console on an application")
@@ -280,17 +282,17 @@ def contexts_add
   repository_url = ARGV.delete_at(0)
   unless repository_url
     puts bold "Usage"
-    puts "k contexts:add <github-repository-url>"
+    puts "k contexts:add <github/gitlab-repository-url>"
     puts ""
     puts bold "Description"
     puts "Adds a k context. A context is a combination of:"
-    puts "1. A GitHub repository containing ArgoCD platform and applications manifests"
+    puts "1. A GitHub/GitLab repository containing ArgoCD platform and applications manifests"
     puts "2. A Docker registry + namespace containing Docker images to be deployed as applications"
     puts "3. A Kubernetes cluster (ie. a locally configured kubectl context)"
     exit
   end
 
-  require "uri"
+
   require "fileutils"
 
   uri = URI(repository_url)
@@ -473,8 +475,6 @@ def dashboard
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k dashboard <application>" unless application
 
-  require "uri"
-
   grafana_query = URI.encode_www_form(
     {
       "orgId" => "1",
@@ -537,7 +537,7 @@ def logs_search
   deployments = JSON.parse(deployments_json).fetch("items")
   abort "Couldn't find any deployments for the application #{application}" if deployments.empty?
 
-  require "uri"
+
 
   deployment_names = deployments.map { |deployment| deployment.fetch("metadata").fetch("name") }
 
@@ -1017,7 +1017,7 @@ def config_edit
     when 0
       exit
     when 1
-      puts "To edit #{application} environment via values.yaml please manually edit https://github.com/#{ORGANIZATION}/#{REPO_NAME}/blob/master/applications/#{application}/values.yaml and open a Pull Request for review." # rubocop:disable Layout/LineLength
+      puts "To edit #{application} environment via values.yaml please manually edit https://#{GIT_HOST}.com/#{ORGANIZATION}/#{REPO_NAME}/blob/master/applications/#{application}/values.yaml and open a Pull Request for review." # rubocop:disable Layout/LineLength
     else
       selected_secret = shared_secrets[input - 2]
       puts "Editing shared secret: #{selected_secret}..."
@@ -1160,7 +1160,7 @@ def deploy
 
 #{application}: Deploy "#{commit_subject}"
 
-Github link: https://github.com/#{ORGANIZATION}/#{repository}/commit/#{git_sha}
+GitHub link: https://#{GIT_HOST}.com/#{ORGANIZATION}/#{repository}/commit/#{git_sha}
 EOF)
 
     safe_git_push
@@ -1880,7 +1880,6 @@ end
 PRIVATE_METHODS_AFTER_COMMANDS = private_methods - PRIVATE_METHODS_BEFORE_COMMANDS
 
 def verify_inside_context_repository!
-  require "uri"
 
   context_repo = URI K_CONTEXT.fetch("repository").delete_suffix(".git")
   current_repo = URI `git remote get-url origin`.strip.delete_suffix(".git")
