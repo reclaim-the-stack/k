@@ -294,7 +294,7 @@ def contexts_add
   require "fileutils"
 
   uri = URI(repository_url)
-  abort "Error: URL must be a GitHub repository" unless uri.host == "github.com"
+  abort "Error: URL must be a GitHub/GitLab repository" unless ['github.com', 'gitlab.com'].include?(uri.host)
 
   puts ""
   puts "Verifying access to #{repository_url}..."
