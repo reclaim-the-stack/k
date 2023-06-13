@@ -132,6 +132,8 @@ def print_commands
   puts "k secrets [<specific-secret>]" + gray(" lists secrets including usage details")
   puts "k secrets:create <secret-name>" + gray(" create a new secret")
   puts "k secrets:edit <secret-name>" + gray(" edit a secret")
+  puts "k secrets:set <secret-name> <key>=<value> [<key2>=<value2> ...]" + gray(" set new secret values")
+  puts "k secrets:unset <secret-name> <key> [<key2> ...]" + gray(" unset / delete secret values")
   puts "k update" + gray(" update k to the latest version")
   puts ""
   puts "DEBUGGING COMMANDS:"
@@ -1413,6 +1415,108 @@ def secrets_edit
     commit_message << "Changed: #{changed_variables.join(' ')}\n" unless changed_variables.empty?
     commit_message << "Added: #{added_variables.join(' ')}\n" unless added_variables.empty?
     commit_message << "Deleted: #{deleted_variables.join(' ')}\n" unless deleted_variables.empty?
+
+    puts commit_message
+
+    system %(git commit -a -m "#{commit_message}" --quiet)
+    safe_git_push
+  end
+end
+
+def secrets_set
+  if ARGV.length < 2
+    puts "Usage: k secrets:set <secret-name> <key>=<value> [<key2>=<value2> ...]"
+    exit
+  end
+
+  shared_secret = ARGV.delete_at(0)
+  new_env = ARGV.map { |argument| argument.split("=", 2) }
+
+  abort "Error: all environment variables must be in the form <key>=<value>" if new_env.any? { _1.length != 2 }
+
+  new_env = new_env.to_h
+
+  bad_keys = new_env.keys.grep_v(/^[A-Z_][A-Z0-9_]*$/)
+  abort "Error: invalid environment variable names: #{bad_keys.join(', ')}" unless bad_keys.empty?
+
+  in_argo_repo do
+    secret_path = "applications/shared-secrets/#{shared_secret}.yaml"
+    abort "No shared secret found at '#{secret_path}'" unless File.exist?(secret_path)
+
+    require "yaml"
+    require "base64"
+
+    original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} -o yaml")
+    original_env = original_secret.fetch("data").transform_values(&Base64.method(:strict_decode64))
+
+    new_env = original_env.merge(new_env)
+
+    if new_env == original_env
+      puts "No changes detected, skipping..."
+      exit
+    end
+
+    data = new_env.transform_values(&:to_s).transform_values(&Base64.method(:strict_encode64))
+    original_secret["data"] = data
+
+    tmp_file = "/#{Dir.tmpdir}/#{shared_secret}.yaml"
+    File.write(tmp_file, original_secret.to_yaml)
+    system_or_die "kubeseal --context #{KUBECTL_CONTEXT} -f #{tmp_file} -o yaml > #{secret_path}"
+    File.delete tmp_file
+
+    changed_variables = new_env.keys.select do |name|
+      original_env[name] && original_env[name] != new_env[name]
+    end
+    added_variables = new_env.keys - original_env.keys
+
+    commit_message = "shared-secrets: edited #{shared_secret}\n\n"
+    commit_message << "Changed: #{changed_variables.join(' ')}\n" unless changed_variables.empty?
+    commit_message << "Added: #{added_variables.join(' ')}\n" unless added_variables.empty?
+
+    puts commit_message
+
+    system %(git commit -a -m "#{commit_message}" --quiet)
+    safe_git_push
+  end
+end
+
+def secrets_unset
+  if ARGV.length < 2
+    puts "Usage: k secrets:unset <secret-name> <key1> [<key2> ...]"
+    exit
+  end
+
+  shared_secret = ARGV.delete_at(0)
+
+  in_argo_repo do
+    secret_path = "applications/shared-secrets/#{shared_secret}.yaml"
+    abort "No shared secret found at '#{secret_path}'" unless File.exist?(secret_path)
+
+    require "yaml"
+    require "base64"
+
+    original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} -o yaml")
+    original_env = original_secret.fetch("data").transform_values(&Base64.method(:strict_decode64))
+
+    new_env = original_env.except(*ARGV)
+
+    if new_env == original_env
+      puts "No changes detected, skipping..."
+      exit
+    end
+
+    data = new_env.transform_values(&:to_s).transform_values(&Base64.method(:strict_encode64))
+    original_secret["data"] = data
+
+    tmp_file = "/#{Dir.tmpdir}/#{shared_secret}.yaml"
+    File.write(tmp_file, original_secret.to_yaml)
+    system_or_die "kubeseal --context #{KUBECTL_CONTEXT} -f #{tmp_file} -o yaml > #{secret_path}"
+    File.delete tmp_file
+
+    deleted_variables = original_env.keys - new_env.keys
+
+    commit_message = "shared-secrets: edited #{shared_secret}\n\n"
+    commit_message << "Deleted: #{deleted_variables.join(' ')}\n"
 
     puts commit_message
 
