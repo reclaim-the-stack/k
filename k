@@ -25,7 +25,7 @@ K_CONFIG = YAML.load_file(K_CONFIG_FILE)
 
 if (K_CONTEXT = K_CONFIG["contexts"][K_CONFIG["context"]])
   ORGANIZATION = K_CONTEXT.fetch("github_organization").freeze
-  GIT_HOST  = URI(K_CONTEXT.fetch('repository')).host.freeze
+  GIT_HOST = URI(K_CONTEXT.fetch("repository")).host.freeze
   REPO_NAME = K_CONFIG["context"].freeze
   INTERNAL_REPO_PATH = "#{ENV.fetch('HOME')}/.k/#{REPO_NAME}".freeze
   REGISTRY = "#{K_CONTEXT.fetch('registry')}/#{K_CONTEXT.fetch('registry_namespace')}".freeze
@@ -1017,7 +1017,7 @@ def config_edit
     when 0
       exit
     when 1
-      puts "To edit #{application} environment via values.yaml please manually edit https://#{GIT_HOST}.com/#{ORGANIZATION}/#{REPO_NAME}/blob/master/applications/#{application}/values.yaml and open a Pull Request for review." # rubocop:disable Layout/LineLength
+      puts "To edit #{application} environment via values.yaml please manually edit https://#{GIT_HOST}/#{ORGANIZATION}/#{REPO_NAME}/blob/master/applications/#{application}/values.yaml and open a Pull Request for review." # rubocop:disable Layout/LineLength
     else
       selected_secret = shared_secrets[input - 2]
       puts "Editing shared secret: #{selected_secret}..."
@@ -1160,7 +1160,7 @@ def deploy
 
 #{application}: Deploy "#{commit_subject}"
 
-GitHub link: https://#{GIT_HOST}.com/#{ORGANIZATION}/#{repository}/commit/#{git_sha}
+GitHub link: https://#{GIT_HOST}/#{ORGANIZATION}/#{repository}/commit/#{git_sha}
 EOF)
 
     safe_git_push
