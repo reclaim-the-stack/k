@@ -1,0 +1,4 @@
+inherit_from: https://raw.githubusercontent.com/mynewsdesk/mnd-rubocop/master/.rubocop.yml
+
+AllCops:
+  TargetRubyVersion: 2.7
