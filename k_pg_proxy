@@ -203,10 +203,24 @@ def handle_connection(client_socket, connection_number)
   authentication_ok = ["R", 8, 0].pack("aL>L>")
   client_socket.write(authentication_ok)
 
-  secret = JSON.parse(`kubectl --context #{CONTEXT} get secret #{database}-pguser-#{database} -o json`)
+  cluster = `kubectl --context #{CONTEXT} get postgrescluster #{database} -o json`
+  abort "Error: postgrescluster '#{database}' not found" if cluster.empty?
 
-  send_startup_message(pg_socket, user: Base64.strict_decode64(secret.fetch("data").fetch("user")), database: database)
-  success = handle_authentication(pg_socket, password: Base64.strict_decode64(secret.fetch("data").fetch("password")))
+  cluster = JSON.parse(cluster)
+  user ||= cluster.dig("spec", "users", 0, "name")
+  unless user
+    puts "No users found in PostgresCluster spec, using default user '#{database}'"
+    user = database
+  end
+
+  secret = JSON.parse(`kubectl --context #{CONTEXT} get secret #{database}-pguser-#{user} -o json`).fetch("data")
+
+  send_startup_message(
+    pg_socket,
+    user: Base64.strict_decode64(secret.fetch("user")),
+    database: Base64.strict_decode64(secret.fetch("dbname")),
+  )
+  success = handle_authentication(pg_socket, password: Base64.strict_decode64(secret.fetch("password")))
 
   unless success
     client_socket.close
