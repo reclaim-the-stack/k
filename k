@@ -565,13 +565,33 @@ def logs_search
 end
 
 module Pg
+  def self.secret_for_cluster(cluster_name, user = nil)
+    require "json"
+
+    cluster = read_kubectl("get postgrescluster #{cluster_name} -o json")
+    abort "Error: postgrescluster '#{cluster_name}' not found" if cluster.empty?
+
+    cluster = JSON.parse(cluster)
+    user ||= cluster.dig("spec", "users", 0, "name")
+    unless user
+      puts "No users found in PostgresCluster spec, using default user '#{cluster_name}'"
+      user = cluster_name
+    end
+
+    JSON.parse(read_kubectl("get secret #{cluster_name}-pguser-#{user} -o json")).fetch("data")
+  end
+
   def self.exec_on_primary(cluster, command)
     primary_pod_name = read_kubectl("get pod --selector=postgres-operator.crunchydata.com/role=master,postgres-operator.crunchydata.com/cluster=#{cluster} -o name").chomp
     kubectl "exec #{primary_pod_name} -it -c database -- #{command}"
   end
 
   def self.query_on_primary(cluster, query)
-    uri = read_kubectl "get secret #{cluster}-pguser-#{cluster} -o go-template='{{.data.uri | base64decode}}'"
+    secret = secret_for_cluster(cluster)
+
+    require "base64"
+
+    uri = Base64.strict_decode64(secret.fetch("uri"))
     exec_on_primary cluster, %(psql '#{uri}' -c "#{query}")
   end
 end
@@ -619,16 +639,13 @@ def pg_password
   cluster = ARGV.delete_at(0)
   abort "Must pass name of cluster, eg. k pg:password <cluster-name> [<user>]" unless cluster
 
-  user = ARGV.delete_at(0) || cluster
+  user = ARGV.delete_at(0)
 
   require "json"
   require "base64"
 
-  secret = read_kubectl("get secret #{cluster}-pguser-#{user} -o json")
-  abort "Error: cluster secret not found, did you specify the cluster name correctly?" if secret.empty?
-
-  data = JSON.parse(secret).fetch("data")
-  password = Base64.strict_decode64(data.fetch("password"))
+  secret = Pg.secret_for_cluster(cluster, user)
+  password = Base64.strict_decode64(secret.fetch("password"))
 
   puts password
 end
@@ -646,19 +663,18 @@ def pg_proxy
 end
 
 def pg_psql
-  cluster = ARGV.delete_at(0)
-  abort "Must pass name of cluster, eg. k pg:psql <cluster-name>" unless cluster
+  cluster_name = ARGV.delete_at(0)
+  abort "Must pass name of cluster, eg. k pg:psql <cluster-name>" unless cluster_name
 
-  require "json"
+  secret = Pg.secret_for_cluster(cluster_name)
+
   require "base64"
-
-  secret = JSON.parse(read_kubectl("get secret #{cluster}-pguser-#{cluster} -o json")).fetch("data")
 
   use_pg_bouncer = secret.key?("pgbouncer-uri")
   uri = Base64.strict_decode64(secret.fetch(use_pg_bouncer ? "pgbouncer-uri" : "uri"))
   puts "Connecting via PgBouncer..." if use_pg_bouncer
 
-  Pg.exec_on_primary(cluster, "psql '#{uri}'")
+  Pg.exec_on_primary(cluster_name, "psql '#{uri}'")
 end
 
 def pg_resources
@@ -671,13 +687,13 @@ def pg_resources
 end
 
 def pg_url
-  cluster = ARGV.delete_at(0)
-  abort "Must pass name of cluster, eg. k pg:url <cluster-name>" unless cluster
+  cluster_name = ARGV.delete_at(0)
+  abort "Must pass name of cluster, eg. k pg:url <cluster-name>" unless cluster_name
 
-  require "json"
+  secret = Pg.secret_for_cluster(cluster_name)
+
   require "base64"
 
-  secret = JSON.parse(read_kubectl("get secret #{cluster}-pguser-#{cluster} -o json")).fetch("data")
   uri = Base64.strict_decode64(secret.fetch("uri"))
   pgbouncer_uri = Base64.strict_decode64(secret.fetch("pgbouncer-uri")) if secret.key?("pgbouncer-uri")
   puts "Postgres URI: #{uri}"
