@@ -1,0 +1,84 @@
+#!/usr/bin/env ruby
+
+require "fileutils"
+include FileUtils
+
+TRAVELING_RUBY_BASE_URL = "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20230803/traveling-ruby-20230803-3.2.2"
+
+PLATFORMS = {
+  "linux-amd64" => {
+    traveling_ruby: "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20230803/traveling-ruby-20230803-3.2.2-linux-x86_64.tar.gz",
+    kubeseal: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.24.0/kubeseal-0.24.0-linux-amd64.tar.gz",
+    kail: "https://github.com/boz/kail/releases/download/v0.16.1/kail_v0.16.1_linux_amd64v2.tar.gz",
+    yq: "https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_linux_amd64",
+  },
+  "linux-arm64" =>{
+    traveling_ruby: "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20230803/traveling-ruby-20230803-3.2.2-linux-arm64.tar.gz",
+    kubeseal: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.24.0/kubeseal-0.24.0-linux-arm.tar.gz",
+    kail: "https://github.com/boz/kail/releases/download/v0.16.1/kail_v0.16.1_linux_arm64.tar.gz",
+    yq: "https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_linux_arm64",
+  },
+  "darwin-amd64" => {
+    traveling_ruby: "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20230803/traveling-ruby-20230803-3.2.2-osx-x86_64.tar.gz",
+    kubeseal: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.24.0/kubeseal-0.24.0-darwin-amd64.tar.gz",
+    kail: "https://github.com/boz/kail/releases/download/v0.16.1/kail_v0.16.1_darwin_amd64v2.tar.gz",
+    yq: "https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_darwin_amd64",
+  },
+  "darwin-arm64" => {
+    traveling_ruby: "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20230803/traveling-ruby-20230803-3.2.2-osx-arm64.tar.gz",
+    kubeseal: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.24.0/kubeseal-0.24.0-darwin-arm64.tar.gz",
+    kail: "https://github.com/boz/kail/releases/download/v0.16.1/kail_v0.16.1_darwin_arm64.tar.gz",
+    yq: "https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_darwin_arm64",
+  },
+}
+
+rm_rf("dist")
+
+def system_or_die(command)
+  system(command) or raise "Command failed: #{command}"
+end
+
+PLATFORMS.map do |platform, urls|
+  Thread.new do
+    mkdir_p "dist/k-#{platform}/app"
+    mkdir_p "dist/k-#{platform}/ruby"
+    mkdir_p "dist/k-#{platform}/vendor/kubeseal"
+    mkdir_p "dist/k-#{platform}/vendor/kail"
+    mkdir_p "dist/k-#{platform}/vendor/yq"
+
+    system_or_die "wget -q -O - #{urls.fetch(:traveling_ruby)} | tar xvz -C dist/k-#{platform}/ruby"
+    system_or_die "wget -q -O - #{urls.fetch(:kubeseal)} | tar xvz -C dist/k-#{platform}/vendor/kubeseal"
+    system_or_die "wget -q -O - #{urls.fetch(:kail)} | tar xvz -C dist/k-#{platform}/vendor/kail"
+    system_or_die "wget -q -O dist/k-#{platform}/vendor/yq/yq #{urls.fetch(:yq)}"
+
+    %w[k k_pg_proxy].each do |executable|
+      cp executable, "dist/k-#{platform}/app/"
+
+      # NOTE: We don't include windows support for now but if we do, we'll need a .bat executable in thé style of:
+      # @ECHO OFF
+      # SET BINDIR=%~dp0
+      # "%BINDIR%\\ruby\\bin\\ruby.bat" "%BINDIR%\\app\\$executable" %*
+
+      executable_wrapper = <<~SHELL
+        #!/bin/bash
+        set -e
+
+        # Figure out where this script is located.
+        SELFDIR=$(dirname "$(readlink -f "$0")")
+
+        export KUBESEAL_PATH="$SELFDIR/vendor/kubeseal/kubeseal"
+        export KAIL_PATH="$SELFDIR/vendor/kail/kail"
+        export YQ_PATH="$SELFDIR/vendor/yq/yq"
+
+        # Run the actual app using the bundled Ruby interpreter.
+        exec "$SELFDIR/ruby/bin/ruby" "$SELFDIR/app/#{executable}" "$@"
+      SHELL
+
+      File.write "dist/k-#{platform}/#{executable}", executable_wrapper
+      chmod "+x", "dist/k-#{platform}/#{executable}"
+
+      # Package everything up in a tarball
+      system_or_die "tar -czf dist/k-#{platform}.tar.gz -C dist/k-#{platform} ."
+    end
+  end
+end.each(&:join)
