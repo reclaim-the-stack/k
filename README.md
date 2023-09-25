@@ -14,9 +14,9 @@ brew install --HEAD reclaim-the-stack/tap/k
 
 **Without Homebrew**
 
-Install the dependencies: [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl), [kail](https://github.com/boz/kail#installing), [kubeseal](https://github.com/bitnami-labs/sealed-secrets#installation) and [yq](https://github.com/mikefarah/yq#install)
+Install the dependencies: [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl)
 
-Then download the [k](k) file from this repository, make it executable and put it in your PATH.
+Then download the latest k [release](https://github.com/reclaim-the-stack/k/releases) package and put it in your `PATH`.
 
 ### Configuration
 

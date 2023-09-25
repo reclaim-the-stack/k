@@ -1,5 +1,11 @@
 #!/usr/bin/env ruby
 
+# ENV variables of note:
+# HOME - the user's home directory, we'll use this to store configuration and manage gitop repos under ~/.k
+# KAIL_PATH - path to kail executable, defaults to "kail"
+# KUBESEAL_PATH - path to kubeseal executable, defaults to "kubeseal"
+# YQ_PATH - path to yq executable, defaults to "yq"
+
 require "yaml"
 require "tmpdir"
 require "uri"
@@ -71,6 +77,20 @@ end
 
 def read_kubectl(command)
   `kubectl --context #{KUBECTL_CONTEXT} #{command.strip}` # strip to allow leading newline
+end
+
+def kubeseal(source_path, destination_path)
+  kubeseal_executable = ENV["KUBESEAL_PATH"] || "kubeseal"
+  abort "Must have kubeseal installed" unless system "which #{kubeseal_executable} > /dev/null"
+
+  system_or_die "#{kubeseal_executable} --context #{KUBECTL_CONTEXT} -f #{source_path} -o yaml > #{destination_path}"
+end
+
+def yq_executable
+  executable = ENV["YQ_PATH"] || "yq"
+  abort "Must have yq installed" unless system "which #{executable} > /dev/null"
+
+  executable
 end
 
 def in_argo_repo
@@ -509,7 +529,9 @@ end
 def logs
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k logs <application> [<type1>, <type2>...]" unless application
-  abort "Please install kail (brew install kail) for logs support" unless system("which kail > /dev/null")
+
+  kail_executable = ENV["KAIL_PATH"] || "kail"
+  abort "Please install kail (brew install kail) for logs support" unless system("which #{kail_executable} > /dev/null")
 
   require "json"
 
@@ -526,7 +548,7 @@ def logs
   kail_arguments = deployment_names.map { |name| "-d #{name}" }.join(" ")
 
   puts "Tailing logs from #{deployment_names.join(', ')}..."
-  exec "kail #{kail_arguments}"
+  exec "#{kail_executable} --context #{KUBECTL_CONTEXT} #{kail_arguments}"
 end
 
 def logs_search
@@ -1135,7 +1157,7 @@ def deploy
     abort "Error: couldn't find app configuration at #{INTERNAL_REPO_PATH}/#{values_yaml_path}" unless File.exist?(values_yaml_path)
 
     # eg. europe-north1-docker.pkg.dev/kubernetes-367912/mynewsdesk/mynewsdesk:sha-31e762a6c69881d4df792ab64da3c8cb58842cdb
-    image = `yq .image #{values_yaml_path}`.chomp
+    image = `#{yq_executable} .image #{values_yaml_path}`.chomp
     repository, _tag = image.split("/").last.split(":")
     new_image = "#{REGISTRY}/#{repository}:sha-#{git_sha}"
 
@@ -1158,8 +1180,8 @@ def deploy
 
     puts "--- Updating Helm chart image and app version"
 
-    system_or_die %(yq -i ".appVersion = \\"#{git_sha}\\"" #{chart_yaml_path})
-    system_or_die %(yq -i ".image = \\"#{new_image}\\"" #{values_yaml_path})
+    system_or_die %(#{yq_executable} -i ".appVersion = \\"#{git_sha}\\"" #{chart_yaml_path})
+    system_or_die %(#{yq_executable} -i ".image = \\"#{new_image}\\"" #{values_yaml_path})
 
     puts "--- Pushing changes to gitops repo"
 
@@ -1389,12 +1411,8 @@ def secrets_edit
   shared_secret = ARGV.delete_at(0)
   abort "Must pass name of secret, eg. k secrets:edit <shared-secret-name>" unless shared_secret
   abort "Missing $EDITOR environment variable, eg: export EDITOR='code --wait --new-window'" unless ENV.key?("EDITOR")
-  abort "Must have kubeseal installed" unless system "which kubeseal > /dev/null"
 
   in_argo_repo do
-    shared_secret_path = "applications/shared-secrets/#{shared_secret}.yaml"
-    abort "No shared secret found at '#{shared_secret_path}'" unless File.exist?(shared_secret_path)
-
     require "yaml"
     require "base64"
 
@@ -1418,7 +1436,7 @@ def secrets_edit
     original_secret["data"] = data
 
     File.write(tmp_file, original_secret.to_yaml)
-    system_or_die "kubeseal --context #{KUBECTL_CONTEXT} -f #{tmp_file} -o yaml > #{shared_secret_path}"
+    kubeseal tmp_file, shared_secret_path
     File.delete tmp_file
 
     changed_variables = new_env.keys.select do |name|
@@ -1477,7 +1495,7 @@ def secrets_set
 
     tmp_file = "/#{Dir.tmpdir}/#{shared_secret}.yaml"
     File.write(tmp_file, original_secret.to_yaml)
-    system_or_die "kubeseal --context #{KUBECTL_CONTEXT} -f #{tmp_file} -o yaml > #{secret_path}"
+    kubeseal tmp_file, secret_path
     File.delete tmp_file
 
     changed_variables = new_env.keys.select do |name|
@@ -1526,7 +1544,7 @@ def secrets_unset
 
     tmp_file = "/#{Dir.tmpdir}/#{shared_secret}.yaml"
     File.write(tmp_file, original_secret.to_yaml)
-    system_or_die "kubeseal --context #{KUBECTL_CONTEXT} -f #{tmp_file} -o yaml > #{secret_path}"
+    kubeseal tmp_file, secret_path
     File.delete tmp_file
 
     deleted_variables = original_env.keys - new_env.keys
@@ -1545,7 +1563,6 @@ def secrets_create
   secret = ARGV.delete_at(0)
   abort "Must pass name of the new secret, eg. k secrets:create <secret-name>" unless secret
   abort "Missing $EDITOR environment variable, eg: export EDITOR='code --wait --new-window'" unless ENV.key?("EDITOR")
-  abort "Must have kubeseal installed" unless system "which kubeseal > /dev/null"
 
   require "yaml"
   require "base64"
@@ -1581,7 +1598,7 @@ def secrets_create
     }.to_yaml
 
     File.write tmp_file, secret_yaml
-    system_or_die "kubeseal --context #{KUBECTL_CONTEXT} -f #{tmp_file} -o yaml > #{secret_path}"
+    kubeseal tmp_file, secret_path
     File.delete tmp_file
 
     system_or_die "git add #{secret_path}"

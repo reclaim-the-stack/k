@@ -2,3 +2,6 @@
 
 # Rubocop
 .rubocop-https---*
+
+# Travelling Ruby
+dist/
