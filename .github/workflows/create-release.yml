@@ -15,10 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: .github/create-release
+      - uses: benjlevesque/short-sha@v2.2
+        id: short-sha
       - uses: softprops/action-gh-release@v1
         with:
           files: dist/*.tar.gz
-          tag_name: ${{ github.sha }}
+          tag_name: ${{ steps.short-sha.outputs.sha }}
           body: |
             Use this release by downloading and extracting the tarball appropriate to your platform and running the `k` executable. You may also add the directory containing the `k` executable to your `PATH` for convenience.
           draft: ${{ github.ref == 'refs/heads/test-release' }}
