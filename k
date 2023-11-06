@@ -2015,12 +2015,20 @@ end
 PRIVATE_METHODS_AFTER_COMMANDS = private_methods - PRIVATE_METHODS_BEFORE_COMMANDS
 
 def verify_inside_context_repository!
+  context_repo_value = K_CONTEXT.fetch("repository").delete_suffix(".git")
+  current_repo_value = `git remote get-url origin`.strip.delete_suffix(".git")
 
-  context_repo = URI K_CONTEXT.fetch("repository").delete_suffix(".git")
-  current_repo = URI `git remote get-url origin`.strip.delete_suffix(".git")
-
-  unless context_repo.path == current_repo.path
+  unless normalized_git_url(current_repo_value).path == normalized_git_url(context_repo_value).path
     abort "Error: this command must be run from a clone of the context repository (#{context_repo})"
+  end
+end
+
+def normalized_git_url(url)
+  case url
+  when /^git@/ then URI "https://" + url[4..].sub(":", "/").delete_suffix(".git") # Convert SSH URL to HTTPS URL
+  when /^https:\/\// then URI url.delete_suffix(".git") # Remove .git suffix from HTTPS URL
+  else
+    abort "Error: url not supported (#{url})"
   end
 end
 
