@@ -190,6 +190,14 @@ def handle_connection(client_socket, connection_number)
 
   # Start port forward and connect to Kubernetes Postgres
   primary_pod = `kubectl --context #{CONTEXT} get pod -o name -l postgres-operator.crunchydata.com/cluster=#{database},postgres-operator.crunchydata.com/role=master`.chomp # rubocop:disable Layout/LineLength
+  primary_pod = `kubectl --context #{CONTEXT} get pod -o name -l cnpg.io/cluster==#{database},cnpg.io/instanceRole=primary`.chomp if primary_pod.empty?
+
+  if primary_pod.empty?
+    $stderr.puts "Error: no primary postgres pod found for #{database}"
+    client_socket.close
+    return
+  end
+
   port_forward_port = PROXY_PORT + connection_number
   port_forward_pid = spawn(
     "kubectl --context #{CONTEXT} port-forward #{primary_pod} #{port_forward_port}:5432",
@@ -203,17 +211,30 @@ def handle_connection(client_socket, connection_number)
   authentication_ok = ["R", 8, 0].pack("aL>L>")
   client_socket.write(authentication_ok)
 
-  cluster = `kubectl --context #{CONTEXT} get postgrescluster #{database} -o json`
-  abort "Error: postgrescluster '#{database}' not found" if cluster.empty?
+  cluster = `kubectl --context #{CONTEXT} get cluster #{database} -o json`
+  pgo = false
 
-  cluster = JSON.parse(cluster)
-  user ||= cluster.dig("spec", "users", 0, "name")
-  unless user
-    puts "No users found in PostgresCluster spec, using default user '#{database}'"
-    user = database
+  if cluster.empty?
+    cluster = `kubectl --context #{CONTEXT} get postgrescluster #{database} -o json`
+    pgo = true
   end
 
-  secret = JSON.parse(`kubectl --context #{CONTEXT} get secret #{database}-pguser-#{user} -o json`).fetch("data")
+  abort "Error: cluster '#{database}' not found" if cluster.empty?
+  cluster = JSON.parse(cluster)
+
+  if pgo
+    user ||= cluster.dig("spec", "users", 0, "name")
+    unless user
+      puts "No users found in PostgresCluster spec, using default user '#{database}'"
+      user = database
+    end
+    secret_suffix = "pguser-#{user}"
+  else
+    user = database
+    secret_suffix = "app"
+  end
+
+  secret = JSON.parse(`kubectl --context #{CONTEXT} get secret #{database}-#{secret_suffix} -o json`).fetch("data")
 
   send_startup_message(
     pg_socket,
