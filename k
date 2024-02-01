@@ -612,20 +612,38 @@ module Pg
   end
 
   def self.cloudnative_secret_for_cluster(cluster_name, user = nil)
+    unless user.nil? || user == "superuser"
+      abort "ERROR: CloudNativePG clusters only support default (ie. do not specify) or superuser users"
+    end
+
     require "json"
+    require "base64"
 
     cluster = read_kubectl("get cluster #{cluster_name} -o json")
     abort "Error: cluster '#{cluster_name}' not found" if cluster.empty?
 
     cluster = JSON.parse(cluster)
     user ||= cluster_name
-    secret_suffix = user == "superuser" ? "superuser" : "app"
 
-    secret = read_kubectl("get secret #{cluster_name}-#{secret_suffix} -o json")
+    app_secret = read_kubectl("get secret #{cluster_name}-app -o json")
+    abort "ERROR: Could not find authentication secret for '#{cluster_name}'" if app_secret.empty?
+    app_secret = JSON.parse(app_secret).fetch("data")
 
-    abort "ERROR: Could not find user '#{user}' in cluster '#{cluster_name}'" if secret.empty?
+    if user == "superuser"
+      superuser_secret = read_kubectl("get secret #{cluster_name}-superuser -o json")
+      abort "ERROR: Could not find superuser secret for '#{cluster_name}'" if superuser_secret.empty?
+      superuser_secret = JSON.parse(superuser_secret).fetch("data")
 
-    JSON.parse(secret).fetch("data")
+      # Superuser secrets use * as dbname since they can theoretically connect to any database,
+      # however this doesn't provide valid URL's to successfully connect via psql.
+      uri = Base64.strict_decode64(superuser_secret.fetch("uri")).delete_suffix("*") + Base64.strict_decode64(app_secret.fetch("dbname"))
+      superuser_secret.merge(
+        "dbname" => app_secret.fetch("dbname"),
+        "uri" => Base64.strict_encode64(uri),
+      )
+    else
+      app_secret
+    end
   end
 
   def self.exec_on_primary(cluster, command)
