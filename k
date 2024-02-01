@@ -590,7 +590,11 @@ module Pg
   def self.secret_for_cluster(cluster_name, user = nil)
     require "json"
 
-    cluster = read_kubectl("get postgrescluster #{cluster_name} -o json")
+    # Prefer cloudnativepg cluster if available
+    return cloudnative_secret_for_cluster(cluster_name, user) unless read_kubectl("get cluster #{cluster_name} -o json --ignore-not-found").empty?
+
+    cluster = read_kubectl("get postgrescluster #{cluster_name} -o json --ignore-not-found")
+
     abort "Error: postgrescluster '#{cluster_name}' not found" if cluster.empty?
 
     cluster = JSON.parse(cluster)
@@ -600,12 +604,43 @@ module Pg
       user = cluster_name
     end
 
-    JSON.parse(read_kubectl("get secret #{cluster_name}-pguser-#{user} -o json")).fetch("data")
+    secret = read_kubectl("get secret #{cluster_name}-pguser-#{user} -o json")
+
+    abort "ERROR: Could not find user '#{user}' in cluster '#{cluster_name}'" if secret.empty?
+
+    JSON.parse(secret).fetch("data")
+  end
+
+  def self.cloudnative_secret_for_cluster(cluster_name, user = nil)
+    require "json"
+
+    cluster = read_kubectl("get cluster #{cluster_name} -o json")
+    abort "Error: cluster '#{cluster_name}' not found" if cluster.empty?
+
+    cluster = JSON.parse(cluster)
+    user ||= cluster_name
+    secret_suffix = user == "superuser" ? "superuser" : "app"
+
+    secret = read_kubectl("get secret #{cluster_name}-#{secret_suffix} -o json")
+
+    abort "ERROR: Could not find user '#{user}' in cluster '#{cluster_name}'" if secret.empty?
+
+    JSON.parse(secret).fetch("data")
   end
 
   def self.exec_on_primary(cluster, command)
-    primary_pod_name = read_kubectl("get pod --selector=postgres-operator.crunchydata.com/role=master,postgres-operator.crunchydata.com/cluster=#{cluster} -o name").chomp
-    kubectl "exec #{primary_pod_name} -it -c database -- #{command}"
+    container = "postgres"
+    primary_pod_name = read_kubectl("get pod --selector=cnpg.io/instanceRole=primary,cnpg.io/cluster=#{cluster} -o name").chomp
+
+    # Fallback on PGO cluster
+    if primary_pod_name.empty?
+      primary_pod_name = read_kubectl("get pod --selector=postgres-operator.crunchydata.com/role=master,postgres-operator.crunchydata.com/cluster=#{cluster} -o name").chomp
+      container = "database"
+    end
+
+    abort "Error: no primary pod found for cluster '#{cluster}' to run command on" if primary_pod_name.empty?
+
+    kubectl "exec #{primary_pod_name} -it -c #{container} -- #{command}"
   end
 
   def self.query_on_primary(cluster, query)
@@ -673,11 +708,17 @@ def pg_password
 end
 
 def pg_pods
+  puts bold("PGO")
   kubectl "get pods -o wide --selector=postgres-operator.crunchydata.com/data=postgres"
+  puts "", bold("CloudNativePG")
+  kubectl "get pods -o wide --selector=cnpg.io/podRole=instance"
 end
 
 def pg_primaries
+  puts bold("PGO")
   kubectl "get pods -o wide --selector=postgres-operator.crunchydata.com/role=master"
+  puts "", bold("CloudNativePG")
+  kubectl "get pods -o wide --selector=cnpg.io/instanceRole=primary"
 end
 
 def pg_proxy
@@ -686,9 +727,11 @@ end
 
 def pg_psql
   cluster_name = ARGV.delete_at(0)
-  abort "Must pass name of cluster, eg. k pg:psql <cluster-name>" unless cluster_name
+  abort "Must pass name of cluster, eg. k pg:psql <cluster-name> [<user>]" unless cluster_name
 
-  secret = Pg.secret_for_cluster(cluster_name)
+  user = ARGV.delete_at(0)
+
+  secret = Pg.secret_for_cluster(cluster_name, user)
 
   require "base64"
 
@@ -696,23 +739,29 @@ def pg_psql
   uri = Base64.strict_decode64(secret.fetch(use_pg_bouncer ? "pgbouncer-uri" : "uri"))
   puts "Connecting via PgBouncer..." if use_pg_bouncer
 
-  Pg.exec_on_primary(cluster_name, "psql '#{uri}'")
+  Pg.exec_on_primary(cluster_name, "env PSQL_HISTORY=/dev/null psql '#{uri}'")
 end
 
 def pg_resources
   cluster = ARGV.delete_at(0)
-  abort "Must pass name of cluster, eg. k pg:status <cluster-name>" unless cluster
+  abort "Must pass name of cluster, eg. k pg:resources <cluster-name>" unless cluster
 
+  puts bold("PGO")
   kubectl "get all --selector=postgres-operator.crunchydata.com/cluster=#{cluster}"
   puts ""
   kubectl "get secrets --selector=postgres-operator.crunchydata.com/cluster=#{cluster}"
+  puts "", bold("CloudNativePG")
+  kubectl "get all --selector=cnpg.io/cluster=#{cluster}"
+  puts ""
+  kubectl "get secrets --selector=cnpg.io/cluster=#{cluster}"
 end
 
 def pg_url
   cluster_name = ARGV.delete_at(0)
-  abort "Must pass name of cluster, eg. k pg:url <cluster-name>" unless cluster_name
+  abort "Must pass name of cluster, eg. k pg:url <cluster-name> [<user>]" unless cluster_name
 
-  secret = Pg.secret_for_cluster(cluster_name)
+  user = ARGV.delete_at(0)
+  secret = Pg.secret_for_cluster(cluster_name, user)
 
   require "base64"
 
