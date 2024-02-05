@@ -1503,7 +1503,7 @@ def secrets_edit
     original_secret["data"] = data
 
     File.write(tmp_file, original_secret.to_yaml)
-    kubeseal tmp_file, shared_secret_path
+    kubeseal tmp_file, "applications/shared-secrets/#{shared_secret}.yaml"
     File.delete tmp_file
 
     changed_variables = new_env.keys.select do |name|
