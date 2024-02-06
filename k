@@ -132,6 +132,7 @@ def print_commands
   puts "k contexts:use <context>" + gray(" switch to a different context")
   puts "k contexts:remove <context>" + gray(" remove a context")
   puts "k console <application>" + gray(" start a rails console on an application")
+  puts "k cnpg" + gray(" shortcut for kubectl cnpg to manage CloudNativePG clusters")
   puts "k dashboard <application>" + gray(" opens application dashboard in grafana")
   puts "k deploy <application>" + gray(" deploy docker image to an application (run from repo/branch you want to deploy)")
   puts "k elasticsearch:url <cluster-name>" + gray(" output the internal URL for an elasticsearch cluster")
@@ -491,6 +492,10 @@ def config_set
   #   name = match[1]
   #   value = match[2]
   # end
+end
+
+def cnpg
+  system "kubectl cnpg --context #{KUBECTL_CONTEXT} #{ARGV.join(" ")}"
 end
 
 def dashboard
@@ -1193,16 +1198,17 @@ def deploy
     puts "The k deploy command deploys a Docker image to an application in Kubernetes by modifying the image attribute in the applications values.yaml file. Should be run from the application git repository. If no explicit git-sha is provided, the current git-sha of the current working directory is used. By default the command will verify that the image exists in the docker registry before proceeding, this doesn't appear to work with all docker registries and can be disabled with the --disable-image-verification flag." # rubocop:disable Layout/LineLength
     puts ""
     puts "USAGE:"
-    puts "k deploy <application> [<git-sha>] [--disable-image-verification]"
+    puts "k deploy <application> [<git-sha>] [--enable-image-verification]"
     puts ""
     puts "EXAMPLE:"
     puts "k deploy <application>" + gray(" deploys the current <git-sha> of the current working directory to <application>")
     puts "k deploy <application> <git-sha>" + gray(" deploys an image with the given <git-sha> to <application>")
-    puts "k deploy <application> --disable-image-verification" + gray(" deploys without verifying the docker image exist")
+    puts "k deploy <application> --enable-image-verification" + gray(" tries to verify that the docker image exist before deploying")
     exit
   end
 
-  disable_image_verification = ARGV.delete("--disable-image-verification")
+  ARGV.delete("--disable-image-verification") # deprecated option
+  enable_image_verification = ARGV.delete("--enable-image-verification")
   application = ARGV.delete_at(0)
 
   git_sha = ARGV.delete_at(0) || `git rev-parse HEAD`.chomp
@@ -1228,7 +1234,7 @@ def deploy
     repository, _tag = image.split("/").last.split(":")
     new_image = "#{REGISTRY}/#{repository}:sha-#{git_sha}"
 
-    unless disable_image_verification
+    if enable_image_verification
       puts "Verifying existence of image: #{new_image}"
       # TODO: manifest inspect is unreliable, we could try using the registry API instead
       # eg. curl -I https://hub.docker.com/v2/repositories/reclaimthestack/rails-example/tags/latest
