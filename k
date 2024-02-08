@@ -336,6 +336,10 @@ def contexts_add
       test_branch_name = "write-access-test-#{Time.now.to_i}"
       system "git branch #{test_branch_name}"
       write_access = system "git push origin #{test_branch_name} -q &> /dev/null"
+
+      # Wait for it to settle before deleting in order avoid an error like "error: unable to delete 'write-access-test-1707400094': remote ref does not exist"
+      sleep 1
+
       system "git push -d origin #{test_branch_name} -q" if write_access
       write_access
     end
