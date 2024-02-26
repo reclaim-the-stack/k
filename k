@@ -315,7 +315,6 @@ def contexts_add
     exit
   end
 
-
   require "fileutils"
 
   uri = URI(repository_url)
@@ -378,12 +377,20 @@ def contexts_add
   registry_namespace = github_organization if registry_namespace.empty?
   puts ""
 
-  puts "Verifying access to registry..."
-  registry_host = registry.split("/").first
-  abort "Error: failed to verify access to #{registry}" unless system "docker login #{registry_host} > /dev/null"
-  puts "Access to #{registry_host} verified ✅"
-  puts "NOTE: write access to the #{registry}/#{registry_namespace} namespace is assumed but not verified"
-  puts ""
+  # NOTE: Docker authentication is only required when pushing images form the local machine
+  # but best practice is to use an external CI/CD. So we've retired verifying access to the
+  # specified registry.
+  #
+  # We could consider adding it back in the future but then we'd need to figure out a better
+  # test than using `docker login` since that prompots the user for a user/password unless
+  # already logged in.
+
+  # puts "Verifying access to registry..."
+  # registry_host = registry.split("/").first
+  # abort "Error: failed to verify access to #{registry}" unless system "docker login #{registry_host} > /dev/null"
+  # puts "Access to #{registry_host} verified ✅"
+  # puts "NOTE: write access to the #{registry}/#{registry_namespace} namespace is assumed but not verified"
+  # puts ""
 
   current_kubectl_context = `kubectl config current-context`.chomp
   kubectl_contexts = `kubectl config get-contexts -o name`.lines.map(&:chomp)
@@ -951,8 +958,10 @@ end
 # TODO: should have a configurable timeout (sleep duration) for long running commands
 def run
   application = ARGV.delete_at(0)
-  abort "Must pass name of application, eg. k run <application> <command>" unless application
-  abort "Must pass command to run, eg. k run <application> <command>" if ARGV.empty?
+  disable_timeout = ARGV.delete("--disable-timeout")
+
+  abort "Must pass name of application, eg. k run <application> <command> [--disable-timeout]" unless application
+  abort "Must pass command to run, eg. k run <application> <command> [--disable-timeout]" if ARGV.empty?
 
   require "json"
 
@@ -985,7 +994,7 @@ def run
           envFrom: container["envFrom"] || [],
           env: container["env"] || {},
           imagePullPolicy: "IfNotPresent",
-          command: %w[sleep 3600], # shutdown the pod after 1 hour
+          command: ["sleep", disable_timeout ? "86400" : "3600"], # shutdown the pod after 1 hour or 24 hours
         },
       ],
     },
