@@ -1020,7 +1020,7 @@ def console
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k console <application>" unless application
 
-  system %(#{__dir__}/k run #{application} "EAGER_LOAD=false bin/rails console")
+  system %(#{__dir__}/k run #{application} "EAGER_LOAD=false IRB_USE_AUTOCOMPLETE=true bin/rails console")
 end
 
 def config
