@@ -2044,7 +2044,7 @@ def redis_cli
   abort "Error: no master pod name found in endpoint YAML for #{redis_cluster}-redis-master" unless master_pod
 
   puts "Running redis-cli on #{master_pod}..."
-  kubectl "exec -c redis -it #{master_pod} -- redis-cli"
+  kubectl "exec -c redis -it #{master_pod} -- redis-cli #{ARGV.join(" ")}"
 end
 
 # TODO: This should use sentinel failover instead of redis failover
