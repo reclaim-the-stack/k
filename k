@@ -143,7 +143,7 @@ def print_commands
   puts "k logs <application> [<type1>, <type2>...]" + gray(" tail application logs")
   puts "k logs:search <application> [<regexp-query>]" + gray(" search application logs via grafana")
   puts "k pg" + gray(" list postgres related commands")
-  puts "k redis:cli <cluster-name>" + gray(" run redis-cli on redis for a redis cluster")
+  puts "k redis:cli <cluster-name> [<arguments for redis-cli>]" + gray(" run redis-cli on redis for a redis cluster")
   puts "k redis:failover <cluster-name>" + gray(" run FAILOVER command on the current master instance")
   puts "k redis:url <cluster-name>" + gray(" output the internal URL for a redis cluster")
   puts "k redis:sentinel-url <cluster-name>" + gray(" output the internal sentinel URL for a redis cluster")
@@ -2032,7 +2032,7 @@ end
 
 def redis_cli
   redis_cluster = ARGV.delete_at(0)
-  abort "Must pass name of redis-cluster, eg. k redis:cli <cluster-name>" unless redis_cluster
+  abort "Must pass name of redis-cluster, eg. k redis:cli <cluster-name> [<arguments for redis-cli>]" unless redis_cluster
 
   require "yaml"
 
@@ -2044,7 +2044,7 @@ def redis_cli
   abort "Error: no master pod name found in endpoint YAML for #{redis_cluster}-redis-master" unless master_pod
 
   puts "Running redis-cli on #{master_pod}..."
-  kubectl "exec -c redis -it #{master_pod} -- redis-cli"
+  kubectl "exec -c redis -it #{master_pod} -- redis-cli #{ARGV.join(" ")}"
 end
 
 # TODO: This should use sentinel failover instead of redis failover
