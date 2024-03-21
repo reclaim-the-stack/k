@@ -975,7 +975,15 @@ def run
     deployments.find { |d| d.fetch("metadata").fetch("name").end_with?("-web") } ||
     deployments.first
   pod_spec = deployment.fetch("spec").fetch("template").fetch("spec")
-  container = pod_spec.fetch("containers").first
+  default_container = deployment.dig("spec", "template", "metadata", "annotations", "kubectl.kubernetes.io/default-container")
+  run_container =
+    if default_container
+      pod_spec.fetch("containers").find { |c| c.fetch("name") == default_container } or abort "Error: The deployment did not include a container named #{default_container}"
+    else
+      pod_spec.fetch("containers").first
+    end
+  other_containers = pod_spec.fetch("containers") - [run_container]
+
   pod_name = "#{application}-run-#{SecureRandom.hex(3)}"
 
   pod_template = {
@@ -987,12 +995,12 @@ def run
     spec: {
       restartPolicy: "Never",
       imagePullSecrets: pod_spec["imagePullSecrets"] || [],
-      containers: [
+      containers: other_containers + [
         {
           name: "run",
-          image: container.fetch("image"),
-          envFrom: container["envFrom"] || [],
-          env: container["env"] || {},
+          image: run_container.fetch("image"),
+          envFrom: run_container["envFrom"] || [],
+          env: run_container["env"] || {},
           imagePullPolicy: "IfNotPresent",
           command: ["sleep", disable_timeout ? "86400" : "3600"], # shutdown the pod after 1 hour or 24 hours
         },
@@ -1011,7 +1019,7 @@ def run
 
   command = ARGV.join(" ")
   puts "Running #{command} on #{pod_name}..."
-  command_success = kubectl "exec #{pod_name} -it -- sh -c '#{command}'"
+  command_success = kubectl "exec #{pod_name} -c run -it -- sh -c '#{command}'"
   kubectl("delete pod #{pod_name} --wait=false") || abort("failed to delete the pod")
   abort unless command_success
 end
