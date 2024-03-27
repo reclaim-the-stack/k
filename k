@@ -1739,6 +1739,8 @@ def verify
 end
 
 def playground
+  godmode = !!ARGV.delete("--privileged")
+
   node_hostname =
     if ARGV.empty?
       workers = read_kubectl("get nodes -o name").split("\n")
@@ -1755,15 +1757,26 @@ def playground
 
   require "securerandom"
 
+  puts "Enabling privileged mode, use with caution!" if godmode
+
   image = "reclaimthestack/playground:20230206-154225"
+  name = "playground-#{SecureRandom.hex(3)}"
   exec %(
-    kubectl --context #{KUBECTL_CONTEXT} run playground-#{SecureRandom.hex(3)} -it --restart=Never --rm --image #{image} \
+    kubectl --context #{KUBECTL_CONTEXT} run #{name} -it --restart=Never --rm --image #{image} \
     --overrides='
       {
         "apiVersion": "v1",
         "spec": {
           "nodeSelector": { "kubernetes.io/hostname": "#{node_hostname}" },
-          "tolerations": [{ "operator": "Exists" }]
+          "tolerations": [{ "operator": "Exists" }],
+          "containers": [{
+            "name": "#{name}",
+            "image": "#{image}",
+            "stdin": true,
+            "stdinOnce": true,
+            "tty": true,
+            "securityContext": { "privileged": #{godmode} }
+          }]
         }
       }
     ' -- bash
