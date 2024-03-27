@@ -158,7 +158,7 @@ def print_commands
   puts "k update" + gray(" update k to the latest version")
   puts ""
   puts "DEBUGGING COMMANDS:"
-  puts "k playground <node-name>" + gray(" open a utilities shell on a kubernetes node")
+  puts "k playground <node-name> [--privileged]" + gray(" open a utilities shell on a kubernetes node")
   puts "k sh <pod|deployment|statefulset>" + gray(" shell into a live deployment")
   puts "k exec <deployment> <command>" + gray(" execute a command on a live deployment")
 end
