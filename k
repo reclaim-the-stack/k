@@ -2062,15 +2062,15 @@ def restart
     end
     abort "Error: no deployments found for #{application}" if deployments.empty?
 
-    # Restart deployments
+    puts
+    puts bold("Restarting deployments")
     deployments.each do |deployment|
-      puts "Restarting #{deployment}..."
       kubectl("rollout restart deployment/#{deployment}") or abort "Error: failed to restart deployment"
     end
 
-    # Wait for rollout to complete
+    puts
+    puts bold("Waiting for deployment rollouts to complete")
     deployments.each do |deployment|
-      puts "Waiting for #{deployment} rollout to complete..."
       kubectl("rollout status deployment/#{deployment} --watch=true --timeout=1m") or abort "Error: failed to wait for rollout"
     end
 
