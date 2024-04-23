@@ -2051,6 +2051,33 @@ def generate_resource
   end
 end
 
+def restart
+  application = ARGV.delete_at(0)
+  abort "Must pass name of application, eg. k restart <application>" unless application
+
+  in_argo_repo do
+    deployments = Dir.glob("applications/#{application}/templates/deployment-*.yaml").map do |path|
+      path.match(%r{applications/(.*?)/templates/deployment-(.*?).yaml}).captures.join("-")
+    end
+    abort "Error: no deployments found for #{application}" if deployments.empty?
+
+    # Restart deployments
+    deployments.each do |deployment|
+      puts "Restarting #{deployment}..."
+      kubectl("rollout restart deployment/#{deployment}") or abort "Error: failed to restart deployment"
+    end
+
+    # Wait for rollout to complete
+    deployments.each do |deployment|
+      puts "Waiting for #{deployment} rollout to complete..."
+      kubectl("rollout status deployment/#{deployment} --watch=true --timeout=1m") or abort "Error: failed to wait for rollout"
+    end
+
+    puts
+    puts "All deployments restarted successfully 🚀"
+  end
+end
+
 def redis_cli
   redis_cluster = ARGV.delete_at(0)
   abort "Must pass name of redis-cluster, eg. k redis:cli <cluster-name> [<arguments for redis-cli>]" unless redis_cluster
