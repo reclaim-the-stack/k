@@ -148,6 +148,7 @@ def print_commands
   puts "k redis:url <cluster-name>" + gray(" output the internal URL for a redis cluster")
   puts "k redis:sentinel-url <cluster-name>" + gray(" output the internal sentinel URL for a redis cluster")
   puts "k releases <application>" + gray(" lists the past 15 releases for an application")
+  puts "k restart <application>" + gray(" restart application deployments")
   puts "k rollback <application>" + gray(" show prompt to rollback an application")
   puts "k run <application> <command>" + gray(" run a command using a one off pod")
   puts "k secrets [<specific-secret>]" + gray(" lists secrets including usage details")
