@@ -1384,6 +1384,8 @@ def releases
 
   in_argo_repo do
     releases = lookup_latest_releases(application)
+    abort "Error: No releases found for #{application}" if releases.empty?
+
     longest_subject = releases.map(&:subject).max_by(&:length)
 
     puts gray("=== ") + bold(application) + bold(" Releases")
