@@ -1300,18 +1300,11 @@ EOF)
 
     puts "+++ Tracking deployment progress"
 
-    if ENV["BUILDKITE"] == "true"
-      domain = detect_deploy_domain("argocd")
-      system %(
-        buildkite-agent annotate \
-        "Track ArgoCD deployment at https://argocd.#{domain}/applications/argocd/#{application}" \
-        --style info
-      )
-    end
-
     puts "Waiting for ArgoCD to deploy the new image:"
     puts new_image
 
+    # NOTE: This assumes that the application is using deployments or cron_jobs to run the image
+    # If some other resource type is used, this will time out.
     1.upto(120) do |second|
       deployments = read_kubectl %(
         get deployments \
@@ -1319,6 +1312,13 @@ EOF)
         -o=jsonpath="{.items[*].spec.template.spec.containers[*].image}"
       )
       break if deployments.include?(new_image)
+
+      cron_jobs = read_kubectl %(
+        get cronjobs \
+        -l argocd.argoproj.io/instance=#{application} \
+        -o=jsonpath="{.items[*].spec.jobTemplate.spec.template.spec.containers[*].image}"
+      )
+      break if cron_jobs.include?(new_image)
 
       abort "Error: Timed out waiting for new image deployment" if second == 120
 
