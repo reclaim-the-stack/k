@@ -1391,10 +1391,11 @@ def releases
     puts gray("=== ") + bold(application) + bold(" Releases")
     puts ""
     puts gray("Version".ljust(13) + "Time".ljust(21) + "Subject".ljust(longest_subject.length + 2) + "Author")
+    today = Time.now.strftime("%Y-%m-%d")
     releases.each do |release|
       time_to_show =
-        if (Time.now - release.time) < 86_400 # within the last 24 hours
-          release.relative_time.ljust(19)
+        if release.time.strftime("%Y-%m-%d") == today
+          "today at #{release.time.strftime('%H:%M:%S')}".ljust(19)
         else
           release.time.strftime("%Y-%m-%d %H:%M:%S")
         end
@@ -1416,12 +1417,13 @@ def rollback
     puts gray("=== ") + bold(application) + bold(" Rollback")
     puts ""
     puts gray("    Version".ljust(17) + "Time".ljust(21) + "Subject".ljust(longest_subject.length + 2) + "Author")
+    today = Time.now.strftime("%Y-%m-%d")
     releases.each.with_index do |release, index|
       adjusted_index = "#{index}.".ljust(3)
       version = index == 0 ? "    #{release.pretty_sha}".ljust(15) : "#{bold(adjusted_index)} #{release.pretty_sha}"
       time_to_show =
-        if (Time.now - release.time) < 86_400 # within the last 24 hours
-          release.relative_time.ljust(19)
+        if release.time.strftime("%Y-%m-%d") == today
+          "today at #{release.time.strftime('%H:%M:%S')}".ljust(19)
         else
           release.time.strftime("%Y-%m-%d %H:%M:%S")
         end
