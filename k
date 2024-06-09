@@ -1253,8 +1253,8 @@ def deploy
 
     # eg. europe-north1-docker.pkg.dev/kubernetes-367912/mynewsdesk/mynewsdesk:sha-31e762a6c69881d4df792ab64da3c8cb58842cdb
     image = `#{yq_executable} .image #{values_yaml_path}`.chomp
-    repository, _tag = image.split("/").last.split(":")
-    new_image = "#{REGISTRY}/#{repository}:sha-#{git_sha}"
+    image_prefix = image.split(":").first
+    new_image = "#{image_prefix}:sha-#{git_sha}"
 
     if enable_image_verification
       puts "Verifying existence of image: #{new_image}"
@@ -1289,6 +1289,7 @@ def deploy
       exit
     end
 
+    repository = image.split("/").last.split(":").first
     system_or_die %(git commit --author="#{commit_author} <#{commit_email}>" -a -F - <<EOF
 
 #{application}: Deploy "#{commit_subject}"
