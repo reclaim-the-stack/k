@@ -5,3 +5,6 @@
 
 # Travelling Ruby
 dist/
+
+# RSpec
+spec/examples.txt
