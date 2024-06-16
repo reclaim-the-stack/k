@@ -2251,6 +2251,8 @@ rescue NoMethodError => e
   puts ""
   puts "Perhaps you meant #{did_you_mean.join(' or ')}?" unless did_you_mean.empty?
   exit 1 # using 'abort' somehow automatically prints the Exception
+rescue Interrupt
+  exit
 end
 
 command = ARGV.delete_at(0)
