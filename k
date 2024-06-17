@@ -177,8 +177,6 @@ def applications
       puts ""
       puts "Run k applications <application-name> for details about a specific application"
     else
-      require "yaml"
-
       missing_applications = requested_applications - applications
       abort "Error: #{missing_applications.join(', ')} didn't match any applications" unless missing_applications.empty?
 
@@ -1045,7 +1043,6 @@ def config
     abort "Error: could not find helm values at #{INTERNAL_REPO_PATH}/#{values_path}" unless File.exist?(values_path)
 
     require "base64"
-    require "yaml"
 
     values = YAML.load_file(values_path)
 
@@ -1130,8 +1127,6 @@ def config_edit
     values_path = "#{app_path}/values.yaml"
     abort "Error: could not find helm values at #{INTERNAL_REPO_PATH}/#{values_path}" unless File.exist?(values_path)
 
-    require "yaml"
-
     values = YAML.load_file(values_path)
 
     shared_secrets = (values["envFrom"] || []).map { |config| config.fetch("secretRef").fetch("name") }.reverse
@@ -1174,7 +1169,6 @@ def config_get
     abort "Error: could not find helm values at #{INTERNAL_REPO_PATH}/#{values_path}" unless File.exist?(values_path)
 
     require "base64"
-    require "yaml"
 
     values = YAML.load_file(values_path)
 
@@ -1352,8 +1346,6 @@ def env_edit
     values_yaml_path = "applications/#{application}/values.yaml"
     abort "Error: couldn't find app configuration at #{INTERNAL_REPO_PATH}/#{values_yaml_path}" unless File.exist?(values_yaml_path)
 
-    require "yaml"
-
     values = YAML.load_file(values_yaml_path)
     original_env = values.slice("envFrom", "env")
 
@@ -1464,8 +1456,6 @@ def rollback
 end
 
 def secrets
-  require "yaml"
-
   specific_secret = ARGV.delete_at(0)
 
   in_argo_repo do
@@ -1513,7 +1503,6 @@ def secrets_edit
   abort "Missing $EDITOR environment variable, eg: export EDITOR='code --wait --new-window'" unless ENV.key?("EDITOR")
 
   in_argo_repo do
-    require "yaml"
     require "base64"
 
     original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} -o yaml")
@@ -1577,7 +1566,6 @@ def secrets_set
     secret_path = "applications/shared-secrets/#{shared_secret}.yaml"
     abort "No shared secret found at '#{secret_path}'" unless File.exist?(secret_path)
 
-    require "yaml"
     require "base64"
 
     original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} -o yaml")
@@ -1626,7 +1614,6 @@ def secrets_unset
     secret_path = "applications/shared-secrets/#{shared_secret}.yaml"
     abort "No shared secret found at '#{secret_path}'" unless File.exist?(secret_path)
 
-    require "yaml"
     require "base64"
 
     original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} -o yaml")
@@ -1664,7 +1651,6 @@ def secrets_create
   abort "Must pass name of the new secret, eg. k secrets:create <secret-name>" unless secret
   abort "Missing $EDITOR environment variable, eg: export EDITOR='code --wait --new-window'" unless ENV.key?("EDITOR")
 
-  require "yaml"
   require "base64"
 
   in_argo_repo do
@@ -2088,8 +2074,6 @@ def redis_cli
   redis_cluster = ARGV.delete_at(0)
   abort "Must pass name of redis-cluster, eg. k redis:cli <cluster-name> [<arguments for redis-cli>]" unless redis_cluster
 
-  require "yaml"
-
   endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-redis-master -o yaml"
   abort "Error: no master endpoint found for #{redis_cluster} (looked for #{redis_cluster}-redis-master)" if endpoint_yaml.empty?
 
@@ -2105,8 +2089,6 @@ end
 def redis_failover
   redis_cluster = ARGV.delete_at(0)
   abort "Must pass name of redis cluster, eg. k redis:failover <cluster-name>" unless redis_cluster
-
-  require "yaml"
 
   endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-redis-master -o yaml"
   abort "Error: no master endpoint found for #{redis_cluster} (looked for #{redis_cluster}-redis-master)" if endpoint_yaml.empty?
@@ -2155,7 +2137,6 @@ end
 PRIVATE_METHODS_AFTER_COMMANDS = private_methods - PRIVATE_METHODS_BEFORE_COMMANDS
 
 def verify_inside_context_repository!
-
   context_repo = URI K_CONTEXT.fetch("repository").delete_suffix(".git")
   current_repo = URI `git remote get-url origin`.strip.delete_suffix(".git")
 
