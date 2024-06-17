@@ -1,0 +1,91 @@
+# Creates a Deployment and Service for a web application listening on .Values.%{name}.port.
+#
+# Example values.yaml:
+# image: %{image}
+# deployments:
+#   %{camelName}:
+#     replicas: 1
+#     memory: 512Mi
+#     cpu: 250m
+#     # Put ENV which should only apply to the web deployment here
+#     env:
+#       - name: WEB_CONCURRENCY
+#         value: "2"
+#     # readinessProbePath: /up # when this path returns 200 the pod will be considered ready
+#     # port: <custom-port> (if you don't want to use port 80)
+#     # command: <custom-command> (if you don't want to run bin/rails server)
+# envFrom:
+#   - secretRef:
+#       name: %{application} # Create a dedicated application secret with k secrets:create %{application}
+# env: [] # Put ENV which applies to all deployments here
+
+{{- $port := .Values.deployments.%{camelName}.port | default 80 }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}-%{name}
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: {{ .Values.deployments.%{camelName}.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-%{name}
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}-%{name}
+      annotations:
+        linkerd.io/inject: enabled
+        kubectl.kubernetes.io/default-container: web
+    spec:
+      containers:
+        - name: web
+          image: {{ .Values.image }}
+          command:
+            - sh
+            - -c
+            - {{ .Values.deployments.%{camelName}.command | default "bin/rails server" }}
+          ports:
+            - containerPort: {{ $port }}
+          securityContext:
+            capabilities:
+              add:
+              - NET_BIND_SERVICE
+          {{- if .Values.deployments.%{camelName}.readinessProbePath }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.deployments.%{camelName}.readinessProbePath }}
+              port: {{ $port }}
+          {{- end }}
+          # NOTE: We avoid putting a limit on CPU since Kubernetes throttling kills performance and CPU averages
+          # tends to be low, so we can allow some pods to burst when needed. Adjust as you see fit.
+          resources:
+            requests:
+              memory: {{ .Values.deployments.%{camelName}.memory }}
+              cpu: {{ .Values.deployments.%{camelName}.cpu }}
+            limits:
+              memory: {{ .Values.deployments.%{camelName}.memory }}
+          envFrom: {{ .Values.envFrom | toYaml | nindent 12 }}
+          env:
+            {{- if .Values.env }}
+            {{- .Values.env | toYaml | nindent 12 }}
+            {{- end }}
+            {{- if .Values.deployments.%{camelName}.env }}
+            {{- .Values.deployments.%{camelName}.env | toYaml | nindent 12 }}
+            {{- end }}
+            - name: PORT
+              value: "{{ $port }}"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Chart.Name }}-%{name}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ $port }}
+      targetPort: {{ $port }}
+      protocol: TCP
+  selector:
+    app: {{ .Chart.Name }}-%{name}

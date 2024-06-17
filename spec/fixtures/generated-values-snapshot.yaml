@@ -1,0 +1,56 @@
+image: docker.io/dummy-user/test-app:latest
+deployments:
+  sidekiq:
+    replicas: 1
+    memory: 512Mi
+    cpu: 250m
+    env: [] # Put ENV which should only apply to the sidekiq deployment here
+    # command: <custom-command> (if you don't want to bundle exec sidekiq)
+  web:
+    replicas: 1
+    memory: 512Mi
+    cpu: 250m
+    # Put ENV which should only apply to the web deployment here
+    env:
+      - name: WEB_CONCURRENCY
+        value: "2"
+    # readinessProbePath: /up # when this path returns 200 the pod will be considered ready
+    # port: <custom-port> (if you don't want to use port 80)
+    # command: <custom-command> (if you don't want to run bin/rails server)
+resources:
+  redis:
+    sentinels: 3
+    replicas: 2
+    memory: 100Mi # must use Gi or Mi format
+    cpu: 250m
+    disk: 500Mi
+  postgres:
+    replicas: 2
+    memory: 1Gi
+    cpu: 1
+    disk: 10Gi
+    # Tip: generate configuration based on CPU / RAM settings at https://pgtune.leopard.in.ua/
+    config:
+      max_connections: "40"
+      shared_buffers: 256MB
+      effective_cache_size: 768MB
+      maintenance_work_mem: 64MB
+      checkpoint_completion_target: "0.9"
+      wal_buffers: 7864kB
+      default_statistics_target: "100"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      work_mem: 3276kB
+      min_wal_size: 1GB
+      max_wal_size: 4GB
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: top
+envFrom:
+  - secretRef:
+      name: test-app # Create a dedicated application secret with k secrets:create test-app
+env:
+  - { name: REDIS_URL, value: "redis://test-app-redis-master.default.svc:6379" }
+  # NOTE: Redis clients do not support SENTINEL_URL out of the box, you'll have to write your own
+  # initialization logic. We recommend using it instead of REDIS_URL for 0 downtime failovers.
+  - { name: SENTINEL_URL, value: "redis-sentinel://rfs-test-app:26379/mymaster" }
+  - { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: test-app-app, key: uri } } }
