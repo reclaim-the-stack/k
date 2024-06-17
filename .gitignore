@@ -8,3 +8,5 @@ dist/
 
 # RSpec
 spec/examples.txt
+
+tmp/

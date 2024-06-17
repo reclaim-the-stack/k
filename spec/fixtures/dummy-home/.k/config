@@ -1,0 +1,8 @@
+context: test
+contexts:
+  test:
+    repository: https://github.com/dummy-organization/dummy-repo
+    registry: docker.io
+    registry_namespace: dummy-user
+    github_organization: dummy-organization
+    kubectl_context: test

@@ -1821,12 +1821,12 @@ def generate
     send(method)
   else
     puts "Generator commands can help with creating Kubernetes resources and should be run from inside " \
-         "your own clone of the devops-kubernetes repository."
+         "your own clone of the gitops repository."
     puts ""
     puts "GENERATORS:"
     puts "k generate application <application-name>" + gray(" generates a new application")
-    puts "k generate deployment <application-name>" + gray(" generates a deployment for an application (web, sidekiq etc)")
-    puts "k generate resource <application-name> [<resource-type]" + gray(" generates a resource for an application (postgres, redis etc)") # rubocop:disable Layout/LineLength
+    puts "k generate deployment <application-name> [<type>]" + gray(" generates a deployment for an application (web, sidekiq etc)")
+    puts "k generate resource <application-name> [<type>]" + gray(" generates a resource for an application (postgres, redis etc)") # rubocop:disable Layout/LineLength
   end
 end
 
@@ -1841,22 +1841,28 @@ def generate_application
 
   abort "Error: An application named '#{application}' already exists" if File.exist?(directory)
 
-  require "yaml"
+  puts "Generating application skeleton..."
+  puts
 
   Dir.mkdir(directory)
   Dir.mkdir("#{directory}/templates")
-  File.open("#{directory}/Chart.yaml", "w") do |file|
-    chart = {
+
+  chart_path = "#{directory}/Chart.yaml"
+  File.write(
+    chart_path,
+    {
       "apiVersion" => "v2",
       "name" => application,
       "type" => "application",
       "version" => "1.0.0",
       "appVersion" => "1.0.0",
-    }
-    file.write chart.to_yaml.delete_prefix("---\n")
-  end
+    }.to_yaml.delete_prefix("---\n")
+  )
+  puts "Created #{bold(chart_path)}"
+
+  values_path = "#{directory}/values.yaml"
   File.write(
-    "#{directory}/values.yaml",
+    values_path,
     {
       "deployments" => {},
       "resources" => {},
@@ -1864,19 +1870,18 @@ def generate_application
       "env" => [],
     }.to_yaml.delete_prefix("---\n"),
   )
-  File.write("#{directory}/templates/.gitkeep", "")
+  puts "Created #{bold(values_path)}"
 
-  puts "Generated application skeleton:"
-  puts "#{directory}/Chart.yaml"
-  puts "#{directory}/values.yaml"
-  puts "#{directory}/templates"
+  template_gitkeep_path = "#{directory}/templates/.gitkeep"
+  File.write(template_gitkeep_path, "")
+  puts "Created #{bold(template_gitkeep_path)}"
 end
 
 def generate_deployment
   verify_inside_context_repository!
 
   application = ARGV.delete_at(0)
-  abort "Must pass name of application, eg. k generate deployment <application>" unless application
+  abort "Must pass name of application, eg. k generate deployment <application> [<type>]" unless application
 
   app_path = "applications/#{application}"
   abort "Error: no application found at '#{app_path}'" unless File.directory?(app_path)
@@ -1892,13 +1897,22 @@ def generate_deployment
   deployment_types.unshift deployment_types.delete("web") if deployment_types.include?("web")
   deployment_types.push deployment_types.delete("other") if deployment_types.include?("other")
 
-  puts "What type of deployment do you wish to generate?"
-  deployment_types.each_with_index do |type, index|
-    puts "#{index + 1}. #{type.capitalize}"
+  type = ARGV.delete_at(0)
+
+  if type
+    unless deployment_types.include?(type)
+      abort "Error: invalid type '#{type}'\n\nMust be one of:\n#{deployment_types.join("\n")}"
+    end
+  else
+    puts "What type of deployment do you wish to generate?"
+    deployment_types.each_with_index do |type, index|
+      puts "#{index + 1}. #{type.capitalize}"
+    end
+    selection = readline.to_i
+
+    abort "Error: invalid selection" unless (1..deployment_types.length).include?(selection)
+    type = deployment_types[selection - 1]
   end
-  selection = readline.to_i
-  abort "Error: invalid selection" unless (1..deployment_types.length).include?(selection)
-  type = deployment_types[selection - 1]
 
   if type == "other"
     print "Please give the deployment a name: "
@@ -1912,11 +1926,11 @@ def generate_deployment
   if File.exist?("#{app_path}/templates/deployment-#{name}.yaml")
     print "A deployment named deployment-#{name} already exists for this application, please provide a suffix: "
     suffix = readline.strip.delete_prefix("-")
+    puts
 
     abort "Error: didn't provide a suffix" if suffix.empty?
 
     name = "#{name}-#{suffix}"
-    puts ""
   end
 
   abort "Error: deployment name must only contain lower-case alphanumeric characters or '-'" unless name[/^[a-z0-9-]+$/]
@@ -1939,39 +1953,73 @@ def generate_deployment
   puts "Created " + bold("#{app_path}/templates/deployment-#{name}.yaml")
   puts ""
 
-  values_example = deployment_template
+  template_values_string = deployment_template
     .match(/# Example values\.yaml:\n([\s\S]*?)\n\n/)[1]
     .gsub(/^# /, "")
+  values_string = File.read(values_path)
+  template_values = YAML.load(template_values_string)
+  values = YAML.load(values_string)
 
-  if File.read(values_path).empty?
-    File.write(values_path, values_example)
-    puts "Injected examples values for the deployment into #{bold(values_path)}"
-    puts "Please check out and modify the values.yaml to fit your use-case."
-  else
-    puts "Please modify and merge these example values into #{bold(values_path)}:"
-    puts values_example
+  # Handle image:
+  if template_values.key?("image") && !values.key?("image")
+    values_string.prepend("image: #{template_values['image']}\n")
   end
 
-  if type == "web"
-    require "yaml"
+  # NOTE: We assume that 'deployments', 'envFrom' and 'env' nodes exists in all
+  # application values.yaml files since "generate application" would create them.
 
+  # Handle deployments:
+  if template_values.key?("deployments")
+    new_deployment_string = template_values_string.match(/^(deployments:.*?)(\n\S|\z)/m)[1]
+    values_string.sub!(/^deployments:.*/, new_deployment_string)
+
+    puts "Modified #{bold(values_path)} with new deployments configuration."
+  end
+
+  # Handle envFrom:
+  if template_values["envFrom"].to_a.any? && values["envFrom"].none?
+    new_env_from = template_values_string.match(/^(envFrom:.*?)(\n\S|\z)/m)[1]
+    values_string.sub!(/^envFrom:.*/, new_env_from)
+
+    puts "Modified #{bold(values_path)} with new envFrom configuration."
+  end
+
+  # Handle env:
+  if template_values["env"].any?
+    new_env = template_values_string.match(/^(env:.*?)(\n\S|\z)/m)[1]
+    values_string.sub!(/^env:.*/, new_env)
+
+    puts "Modified #{bold(values_path)} with additional env variables."
+  end
+
+  File.write(values_path, values_string)
+
+  cloudflared_config_path = "platform/cloudflared/config.yaml"
+  if type == "web" && File.exist?(cloudflared_config_path)
     domain = detect_deploy_domain
+    cloudflared_config_string = File.read(cloudflared_config_path)
 
-    puts ""
-    puts "To expose the deployment to the internet add an entry to the ingress section in:"
-    puts bold("platform/cloudflared/config.yaml")
-    puts ""
-    puts "Example:"
-    puts "- hostname: #{application}.#{domain}"
-    puts "  service: http://#{application}-web"
+    new_ingress = <<~YAML
+      ingress:
+        - hostname: #{application}.#{domain}
+          service: http://#{application}-web
+    YAML
+    cloudflared_config_string.sub!(/^ingress:.*\n/, new_ingress)
+
+    File.write(cloudflared_config_path, cloudflared_config_string)
+
+    puts "Modified #{bold(cloudflared_config_path)} with new ingress configuration."
   end
+
+  puts
+  puts "Please inspect all changes before you commit and push"
 end
 
 def generate_resource
   verify_inside_context_repository!
 
   application = ARGV.delete_at(0)
-  abort "Must pass name of application, eg. k generate resource <application>" unless application
+  abort "Must pass name of application, eg. k generate resource <application> [<type>]" unless application
 
   app_path = "applications/#{application}"
   abort "Error: no application found at '#{app_path}'" unless File.directory?(app_path)
@@ -1993,6 +2041,7 @@ def generate_resource
       puts "#{index + 1}. #{type.capitalize}"
     end
     selection = readline.to_i
+    puts
     abort "Error: invalid selection" unless (1..resource_types.length).include?(selection)
     type = resource_types[selection - 1]
   end
@@ -2029,18 +2078,44 @@ def generate_resource
   puts "Created " + bold("#{app_path}/templates/#{name}.yaml")
   puts ""
 
-  values_example = resource_template
+  template_values_string = resource_template
     .match(/# Example values\.yaml:\n([\s\S]*?)\n\n/)[1]
     .gsub(/^# /, "")
+  values_string = File.read(values_path)
+  template_values = YAML.load(template_values_string)
+  values = YAML.load(values_string)
 
-  if File.read(values_path).empty?
-    File.write(values_path, values_example)
-    puts "Injected examples values for the deployment into #{bold(values_path)}"
-    puts "Please check out and modify the values.yaml to fit your use-case."
-  else
-    puts "Please modify and merge these example values into #{bold(values_path)}:"
-    puts values_example
+  # NOTE: We assume that 'resources', 'envFrom' and 'env' nodes exists in all
+  # application values.yaml files since "generate application" would create them.
+
+  # Handle resources:
+  if template_values.key?("resources")
+    new_resources_string = template_values_string.match(/^(resources:.*?)(\n\S|\z)/m)[1]
+    values_string.sub!(/^resources:.*/, new_resources_string)
+
+    puts "Modified #{bold(values_path)} with new resources configuration."
   end
+
+  # Handle envFrom:
+  if template_values["envFrom"].to_a.any? && values["envFrom"].none?
+    new_env_from = template_values_string.match(/^(envFrom:.*?)(\n\S|\z)/m)[1]
+    values_string.sub!(/^envFrom:.*/, new_env_from)
+
+    puts "Modified #{bold(values_path)} with new envFrom configuration."
+  end
+
+  # Handle env:
+  if template_values["env"].any?
+    new_env = template_values_string.match(/^(env:.*?)(\n\S|\z)/m)[1]
+    values_string.sub!(/^env:.*/, new_env)
+
+    puts "Modified #{bold(values_path)} with additional env variables."
+  end
+
+  File.write(values_path, values_string)
+
+  puts
+  puts "Please inspect and tweak all changes before you commit and push"
 end
 
 def restart
