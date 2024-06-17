@@ -2212,8 +2212,8 @@ end
 PRIVATE_METHODS_AFTER_COMMANDS = private_methods - PRIVATE_METHODS_BEFORE_COMMANDS
 
 def verify_inside_context_repository!
-  context_repo = URI K_CONTEXT.fetch("repository").delete_suffix(".git")
-  current_repo = URI `git remote get-url origin`.strip.delete_suffix(".git")
+  context_repo = URI K_CONTEXT.fetch("repository").delete_suffix(".git").delete_suffix("/")
+  current_repo = URI `git remote get-url origin`.strip.delete_suffix(".git").delete_suffix("/")
 
   unless context_repo.path == current_repo.path
     abort "Error: this command must be run from a clone of the context repository (#{context_repo})"
