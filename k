@@ -1736,8 +1736,8 @@ def playground
   node_hostname =
     if ARGV.empty?
       workers = read_kubectl("get nodes -o name").split("\n")
-      worker_one = workers.find { |name| name.include?("worker-1") }
-      abort "Error: no worker-1 node found" unless worker_one
+      worker_one = workers.find { |name| name.include?("worker-1") || name.include?("worker-01") }
+      abort "Error: no worker-1 or worker-01 node found" unless worker_one
 
       worker_one = worker_one.delete_prefix("node/")
       puts "No node argument provided, defaulting to #{worker_one}"
