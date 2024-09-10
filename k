@@ -2290,19 +2290,19 @@ def lookup_latest_releases(application)
       --pretty=format:'%H<col>%aN<col>%ad<col>%ar<col>%s<col>%b<row>' \
       --follow -- applications/#{application}/values.yaml
   `
-
   release_struct = Struct.new(:sha, :pretty_sha, :author, :time, :relative_time, :subject, :body)
 
   git_log.split("<row>").map do |row|
     sha, author, time, relative_time, subject, body = row.strip.split("<col>")
+
     release_struct.new(
-      sha: sha,
-      pretty_sha: sha[0..10],
-      author: author,
-      time: Time.parse(time),
-      relative_time: relative_time,
-      subject: subject.delete_prefix("#{application}: "),
-      body: body,
+      sha,
+      sha[0..10],
+      author,
+      Time.parse(time),
+      relative_time,
+      subject.delete_prefix("#{application}: "),
+      body,
     )
   end
 end
