@@ -159,7 +159,7 @@ def print_commands
   puts "k update" + gray(" update k to the latest version")
   puts ""
   puts "DEBUGGING COMMANDS:"
-  puts "k playground <node-name> [--privileged]" + gray(" open a utilities shell on a kubernetes node")
+  puts "k playground <node-name> [--privileged] [--host-network]" + gray(" open a utilities shell on a kubernetes node")
   puts "k sh <pod|deployment|statefulset>" + gray(" shell into a live deployment")
   puts "k exec <deployment> <command>" + gray(" execute a command on a live deployment")
 end
@@ -1732,6 +1732,11 @@ end
 
 def playground
   godmode = !!ARGV.delete("--privileged")
+  host_network = !!ARGV.delete("--host-network")
+
+  if host_network && !godmode
+    abort "Error: --host-network requires --privileged"
+  end
 
   node_hostname =
     if ARGV.empty?
@@ -1750,10 +1755,35 @@ def playground
   require "securerandom"
 
   puts "Enabling privileged mode, use with caution!" if godmode
+  puts "Enabling host network mode." if host_network
 
   image = "reclaimthestack/playground:20230206-154225"
   name = "playground-#{SecureRandom.hex(3)}"
-  exec %(
+
+  god_mounts =
+    if godmode
+      %(
+        "volumeMounts": [{
+          "mountPath": "/ephemeral",
+          "name": "ephemeral"
+        }],
+      )
+    end
+  god_volumes =
+    if godmode
+      %(
+        ,
+        "volumes": [{
+          "name": "ephemeral",
+          "hostPath": {
+            "path": "/var",
+            "type": "Directory"
+          }
+        }]
+      )
+    end
+
+  kubectl_command = %(
     kubectl --context #{KUBECTL_CONTEXT} run #{name} -it --restart=Never --rm --image #{image} \
     --overrides='
       {
@@ -1767,12 +1797,17 @@ def playground
             "stdin": true,
             "stdinOnce": true,
             "tty": true,
+            #{god_mounts}
             "securityContext": { "privileged": #{godmode} }
           }]
+          #{god_volumes}
+          #{host_network ? ', "hostNetwork": true' : ''}
         }
       }
-    ' -- bash
+    '
   )
+
+  exec kubectl_command
 end
 
 def env_to_secret
