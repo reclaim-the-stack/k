@@ -998,7 +998,7 @@ def run
           name: "run",
           image: run_container.fetch("image"),
           envFrom: run_container["envFrom"] || [],
-          env: run_container["env"] || {},
+          env: run_container["env"] || [],
           imagePullPolicy: "IfNotPresent",
           command: ["sleep", disable_timeout ? "86400" : "3600"], # shutdown the pod after 1 hour or 24 hours
         },
