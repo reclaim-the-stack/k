@@ -268,13 +268,12 @@ def build_and_push
   system_or_die command
 end
 
-def clickhouse
+def clickhouse_cli
   cluster = ARGV.delete_at(0)
   abort "Must pass name of cluster, eg. k clickhouse <cluster>" unless cluster
 
-  require "json"
-
-  pod = read_kubectl("get pods -l clickhouse.altinity.com/chi=#{cluster} -o name").lines.first.strip
+  pod = read_kubectl("get pods -l clickhouse.altinity.com/chi=#{cluster} -o name").lines.first&.strip
+  abort "Error: no clickhouse pods found for cluster '#{cluster}'" unless pod
 
   kubectl "exec -it #{pod} -- clickhouse-client"
 end
