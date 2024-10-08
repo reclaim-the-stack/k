@@ -3,6 +3,9 @@ on:
     branches:
       - master
       - test-release
+    paths:
+      - k
+      - k_pg_proxy
 
 name: Create Release
 
