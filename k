@@ -964,16 +964,23 @@ def run
   require "json"
 
   deployments_json = read_kubectl "get deployments -o json -l argocd.argoproj.io/instance=#{application}"
-  deployments = JSON.parse(deployments_json).fetch("items")
-  abort "Couldn't find any deployments for the application #{application}" if deployments.empty?
+  resources = JSON.parse(deployments_json).fetch("items")
+  if resources.empty?
+    cronjobs_json = read_kubectl "get cronjobs -o json -l argocd.argoproj.io/instance=#{application}"
+    resources = JSON.parse(cronjobs_json).fetch("items")
+    abort "Couldn't find any deployments or cronjobs for the application #{application}" if resources.empty?
+  end
 
-  require "securerandom"
-
-  deployment =
-    deployments.find { |d| d.fetch("metadata").fetch("name").end_with?("-web") } ||
-    deployments.first
-  pod_spec = deployment.fetch("spec").fetch("template").fetch("spec")
-  default_container = deployment.dig("spec", "template", "metadata", "annotations", "kubectl.kubernetes.io/default-container")
+  resource =
+    resources.find { |d| d.fetch("metadata").fetch("name").end_with?("-web") } ||
+    resources.first
+  pod_spec =
+    if resource["kind"] == "Deployment"
+      resource.fetch("spec").fetch("template").fetch("spec")
+    else
+      resource.fetch("spec").fetch("jobTemplate").fetch("spec").fetch("template").fetch("spec")
+    end
+  default_container = resource.dig("spec", "template", "metadata", "annotations", "kubectl.kubernetes.io/default-container")
   run_container =
     if default_container
       pod_spec.fetch("containers").find { |c| c.fetch("name") == default_container } or abort "Error: The deployment did not include a container named #{default_container}"
@@ -981,6 +988,8 @@ def run
       pod_spec.fetch("containers").first
     end
   other_containers = pod_spec.fetch("containers") - [run_container]
+
+  require "securerandom"
 
   pod_name = "#{application}-run-#{SecureRandom.hex(3)}"
 
