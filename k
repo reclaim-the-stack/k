@@ -1756,7 +1756,7 @@ def playground
   puts "Enabling privileged mode, use with caution!" if godmode
   puts "Enabling host network mode." if host_network
 
-  image = "reclaimthestack/playground:20230206-154225"
+  image = "reclaimthestack/playground:sha-6048e00b17198cc058286e5b71dd32de807c12bd"
   name = "playground-#{SecureRandom.hex(3)}"
 
   god_mounts =
