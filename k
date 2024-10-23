@@ -2317,18 +2317,12 @@ end
 
 def detect_deploy_domain(primary_subdomain = "argocd")
   in_argo_repo do
-    if File.exist?("platform-applications/cloudflared.yaml")
-      begin
-        YAML.load_file("platform/cloudflared/config.yaml")
-          .fetch("ingress")
-          .find { |ingress| ingress["hostname"].start_with?(primary_subdomain) }
-          .then { |ingress| ingress["hostname"].split(".").drop(1).join(".") }
-      rescue StandardError
-        "example.com"
-      end
-    else
-      "example.com"
-    end
+    YAML.load_file("platform/cloudflared/config.yaml")
+      .fetch("ingress")
+      .find { |ingress| ingress["hostname"].start_with?(primary_subdomain) }
+      .then { |ingress| ingress["hostname"].split(".").drop(1).join(".") }
+  rescue StandardError
+    "example.com"
   end
 end
 
