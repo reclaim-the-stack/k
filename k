@@ -568,10 +568,8 @@ def logs
   kail_executable = ENV["KAIL_PATH"] || "kail"
   abort "Please install kail (brew install kail) for logs support" unless system("which #{kail_executable} > /dev/null")
 
-  require "json"
-
-  deployments_json = read_kubectl "get deployments -o json -l argocd.argoproj.io/instance=#{application}"
-  deployments = JSON.parse(deployments_json).fetch("items")
+  deployments_json = read_kubectl "get deployments -o yaml -l argocd.argoproj.io/instance=#{application}"
+  deployments = YAML.load(deployments_json).fetch("items")
   abort "Couldn't find any deployments for the application #{application}" if deployments.empty?
 
   deployment_names = deployments.map { |deployment| deployment.fetch("metadata").fetch("name") }
@@ -590,13 +588,13 @@ def logs_search
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k logs:search <application> [<type1>, <type2>...]" unless application
 
-  require "json"
-
-  deployments_json = read_kubectl "get deployments -o json -l argocd.argoproj.io/instance=#{application}"
-  deployments = JSON.parse(deployments_json).fetch("items")
+  deployments_json = read_kubectl "get deployments -o yaml -l argocd.argoproj.io/instance=#{application}"
+  deployments = YAML.load(deployments_json).fetch("items")
   abort "Couldn't find any deployments for the application #{application}" if deployments.empty?
 
   deployment_names = deployments.map { |deployment| deployment.fetch("metadata").fetch("name") }
+
+  require "json" # for to_json
 
   grafana_query = URI.encode_www_form_component(
     {
@@ -623,27 +621,24 @@ end
 
 module Pg
   def self.secret_for_cluster(cluster_name, user = nil)
-    require "json"
-
     # Prefer cloudnativepg cluster if available
-    return cloudnative_secret_for_cluster(cluster_name, user) unless read_kubectl("get cluster #{cluster_name} -o json --ignore-not-found").empty?
+    return cloudnative_secret_for_cluster(cluster_name, user) if kubectl?("get cluster.postgresql.cnpg.io #{cluster_name}")
 
-    cluster = read_kubectl("get postgrescluster #{cluster_name} -o json --ignore-not-found")
-
+    cluster = read_kubectl("get postgrescluster #{cluster_name} -o yaml --ignore-not-found")
     abort "Error: postgrescluster '#{cluster_name}' not found" if cluster.empty?
 
-    cluster = JSON.parse(cluster)
+    cluster = YAML.load(cluster)
     user ||= cluster.dig("spec", "users", 0, "name")
     unless user
       puts "No users found in PostgresCluster spec, using default user '#{cluster_name}'"
       user = cluster_name
     end
 
-    secret = read_kubectl("get secret #{cluster_name}-pguser-#{user} -o json")
+    secret = read_kubectl("get secret #{cluster_name}-pguser-#{user} -o yaml")
 
     abort "ERROR: Could not find user '#{user}' in cluster '#{cluster_name}'" if secret.empty?
 
-    JSON.parse(secret).fetch("data")
+    YAML.load(secret).fetch("data")
   end
 
   def self.cloudnative_secret_for_cluster(cluster_name, user = nil)
@@ -651,23 +646,22 @@ module Pg
       abort "ERROR: CloudNativePG clusters only support default (ie. do not specify) or superuser users"
     end
 
-    require "json"
     require "base64"
 
-    cluster = read_kubectl("get cluster #{cluster_name} -o json")
+    cluster = read_kubectl("get cluster #{cluster_name} -o yaml")
     abort "Error: cluster '#{cluster_name}' not found" if cluster.empty?
 
-    cluster = JSON.parse(cluster)
+    cluster = YAML.load(cluster)
     user ||= cluster_name
 
-    app_secret = read_kubectl("get secret #{cluster_name}-app -o json")
+    app_secret = read_kubectl("get secret #{cluster_name}-app -o yaml")
     abort "ERROR: Could not find authentication secret for '#{cluster_name}'" if app_secret.empty?
-    app_secret = JSON.parse(app_secret).fetch("data")
+    app_secret = YAML.load(app_secret).fetch("data")
 
     if user == "superuser"
-      superuser_secret = read_kubectl("get secret #{cluster_name}-superuser -o json")
+      superuser_secret = read_kubectl("get secret #{cluster_name}-superuser -o yaml")
       abort "ERROR: Could not find superuser secret for '#{cluster_name}'" if superuser_secret.empty?
-      superuser_secret = JSON.parse(superuser_secret).fetch("data")
+      superuser_secret = YAML.load(superuser_secret).fetch("data")
 
       # Superuser secrets use * as dbname since they can theoretically connect to any database,
       # however this doesn't provide valid URL's to successfully connect via psql.
@@ -787,7 +781,6 @@ def pg_password
 
   user = ARGV.delete_at(0)
 
-  require "json"
   require "base64"
 
   secret = Pg.secret_for_cluster(cluster, user)
@@ -1018,13 +1011,11 @@ def run
   abort "Must pass name of application, eg. k run <application> <command> [--disable-timeout]" unless application
   abort "Must pass command to run, eg. k run <application> <command> [--disable-timeout]" if ARGV.empty?
 
-  require "json"
-
-  deployments_json = read_kubectl "get deployments -o json -l argocd.argoproj.io/instance=#{application}"
-  resources = JSON.parse(deployments_json).fetch("items")
+  deployments_json = read_kubectl "get deployments -o yaml -l argocd.argoproj.io/instance=#{application}"
+  resources = YAML.load(deployments_json).fetch("items")
   if resources.empty?
-    cronjobs_json = read_kubectl "get cronjobs -o json -l argocd.argoproj.io/instance=#{application}"
-    resources = JSON.parse(cronjobs_json).fetch("items")
+    cronjobs_json = read_kubectl "get cronjobs -o yaml -l argocd.argoproj.io/instance=#{application}"
+    resources = YAML.load(cronjobs_json).fetch("items")
     abort "Couldn't find any deployments or cronjobs for the application #{application}" if resources.empty?
   end
 
@@ -1047,6 +1038,7 @@ def run
   other_containers = pod_spec.fetch("containers") - [run_container]
 
   require "securerandom"
+  require "json" # for to_json
 
   pod_name = "#{application}-run-#{SecureRandom.hex(3)}"
 
@@ -1391,11 +1383,10 @@ def elasticsearch_url
   elasticsearch_cluster = ARGV.delete_at(0)
   abort "Must pass name of elasticsearch cluster, eg. k elasticsearch:url <cluster-name>" unless elasticsearch_cluster
 
-  require "json"
   require "base64"
 
-  secret = read_kubectl("get secret #{elasticsearch_cluster}-es-elastic-user -o json")
-  password = JSON.parse(secret).fetch("data").fetch("elastic")
+  secret = read_kubectl("get secret #{elasticsearch_cluster}-es-elastic-user -o yaml")
+  password = YAML.load(secret).fetch("data").fetch("elastic")
   decoded_password = Base64.strict_decode64(password)
 
   puts "http://elastic:#{decoded_password}@#{elasticsearch_cluster}-es-http:9200"
