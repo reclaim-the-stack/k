@@ -2389,8 +2389,9 @@ end
 
 def redis
   puts "k redis:cli <cluster-name> [<arguments for redis-cli>]" + gray(" run redis-cli on redis for a redis cluster")
-  puts "k redis:failover <cluster-name>" + gray(" run FAILOVER command on the current master instance")
+  puts "k redis:failover <cluster-name>" + gray(" run SENTINEL FAILOVER command to failover the current master")
   puts "k redis:primaries" + gray(" list all primary redis instances")
+  puts "k redis:sentinel-cli" + gray(" run redis-cli on the sentinel for a redis cluster")
   puts "k redis:sentinel-url <cluster-name>" + gray(" output the internal sentinel URL for a redis cluster")
   puts "k redis:url <cluster-name>" + gray(" output the internal URL for a redis cluster")
 end
@@ -2399,36 +2400,116 @@ def redis_cli
   redis_cluster = ARGV.delete_at(0)
   abort "Must pass name of redis-cluster, eg. k redis:cli <cluster-name> [<arguments for redis-cli>]" unless redis_cluster
 
-  endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-redis-master -o yaml"
-  abort "Error: no master endpoint found for #{redis_cluster} (looked for #{redis_cluster}-redis-master)" if endpoint_yaml.empty?
+  # check if redis-cluster is from spotahomes operator
+  master_pod =
+    if kubectl?("get redisfailover #{redis_cluster}-redis") || kubectl?("get redisfailover #{redis_cluster}")
+      # We're using Spotahome's Redis Operator
+      endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-redis-master -o yaml"
+      endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-master -o yaml" if endpoint_yaml.empty?
+      abort "Error: no master endpoint found for #{redis_cluster} (looked for #{redis_cluster}-redis-master)" if endpoint_yaml.empty?
 
-  endpoint = YAML.safe_load(endpoint_yaml)
-  master_pod = endpoint.dig("subsets", 0, "addresses", 0, "targetRef", "name")
-  abort "Error: no master pod name found in endpoint YAML for #{redis_cluster}-redis-master" unless master_pod
+      endpoint = YAML.safe_load(endpoint_yaml)
+      name = endpoint.dig("subsets", 0, "addresses", 0, "targetRef", "name")
+      abort "Error: no master pod name found in endpoint YAML for #{redis_cluster}-redis-master" unless name
+
+      name
+    else
+      # Rely on Reclaim the Stack's sentinel based approach without operator
+      sentinel_pod_yaml = read_kubectl("get pods -l redis.reclaim-the-stack.com/cluster=#{redis_cluster} -l redis.reclaim-the-stack.com/component=sentinel --field-selector=status.phase=Running -o yaml")
+
+      sentinel_pod = YAML.safe_load(sentinel_pod_yaml).dig("items", 0, "metadata", "name")
+      abort "Error: no sentinel pod found for '#{redis_cluster}'" unless sentinel_pod
+
+      # Get redis master address from Sentinel. Output example:
+      # 1) "manual-redis-redis-foo-0.manual-redis-redis-foo.default.svc.cluster.local"
+      # 2) "6379"
+      response = read_kubectl("exec -c sentinel -it #{sentinel_pod} -- redis-cli -p 26379 SENTINEL GET-MASTER-ADDR-BY-NAME #{redis_cluster}")
+      # extract master pod name from address
+      match = response.match(/1\) "([^\.]+)/)
+      abort "Error: no master pod name found in sentinel response for #{redis_cluster}" unless match
+
+      match[1]
+    end
 
   puts "Running redis-cli on #{master_pod}..."
   kubectl "exec -c redis -it #{master_pod} -- redis-cli #{ARGV.join(" ")}"
 end
 
-# TODO: This should use sentinel failover instead of redis failover
+def redis_sentinel_cli
+  redis_cluster = ARGV.delete_at(0)
+  abort "Must pass name of redis-cluster, eg. k redis:sentinel:cli <cluster-name> [<arguments for redis-cli>]" unless redis_cluster
+
+  sentinel_pod_yaml =
+    if kubectl?("get redisfailover #{redis_cluster}-redis") || kubectl?("get redisfailover #{redis_cluster}")
+      # We're using Spotahome's Redis Operator
+      read_kubectl("get pods -l 'redisfailovers.databases.spotahome.com/name in (#{redis_cluster}, #{redis_cluster}-redis),app.kubernetes.io/component=sentinel' --field-selector=status.phase=Running -o yaml")
+    else
+      # Rely on Reclaim the Stack's sentinel based approach without operator
+      read_kubectl("get pods -l 'redis.reclaim-the-stack.com/cluster=#{redis_cluster},redis.reclaim-the-stack.com/component=sentinel' --field-selector=status.phase=Running -o yaml")
+    end
+
+  sentinel_pod = YAML.safe_load(sentinel_pod_yaml).dig("items", 0, "metadata", "name")
+  abort "Error: no sentinel pod found for '#{redis_cluster}'" unless sentinel_pod
+
+  puts "Running redis-cli on #{sentinel_pod}..."
+  kubectl "exec -c sentinel -it #{sentinel_pod} -- redis-cli -p 26379 #{ARGV.join(" ")}"
+end
+
 def redis_failover
   redis_cluster = ARGV.delete_at(0)
   abort "Must pass name of redis cluster, eg. k redis:failover <cluster-name>" unless redis_cluster
 
-  endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-redis-master -o yaml"
-  abort "Error: no master endpoint found for #{redis_cluster} (looked for #{redis_cluster}-redis-master)" if endpoint_yaml.empty?
+  if kubectl?("get redisfailover #{redis_cluster}-redis")
+    # We're using Spotahome's Redis Operator
 
-  endpoint = YAML.safe_load(endpoint_yaml)
-  master_pod = endpoint.dig("subsets", 0, "addresses", 0, "targetRef", "name")
-  abort "Error: no master pod name found in endpoint YAML for #{redis_cluster}-redis-master" unless master_pod
+    # Remember current master pod for eviction later on
+    master_endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-redis-master -o yaml"
+    abort "Error: no master endpoint found for #{redis_cluster} (looked for #{redis_cluster}-redis-master)" if master_endpoint_yaml.empty?
 
-  puts "Running redis-cli with FAILOVER command on #{master_pod}..."
-  kubectl "exec -c redis -it #{master_pod} -- redis-cli FAILOVER"
+    master_endpoint = YAML.safe_load(master_endpoint_yaml)
+    master_pod = master_endpoint.dig("subsets", 0, "addresses", 0, "targetRef", "name")
+    abort "Error: no master pod name found in endpoint YAML for #{redis_cluster}-redis-master" unless master_pod
 
-  puts "Running redis-cli with CLIENT KILL TYPE normal on #{master_pod} for 30 seconds to evict existing connections..."
-  30.times do
-    kubectl "exec -c redis -it #{master_pod} -- redis-cli CLIENT KILL TYPE normal"
-    sleep 1
+    # Use Sentinel to failover
+    sentinel_endpoint_yaml = read_kubectl "get endpoints/rfs-#{redis_cluster}-redis --ignore-not-found -o yaml"
+    abort "Error: no sentinel endpoint found for #{redis_cluster} (looked for rfs-#{redis_cluster}-redis)" if sentinel_endpoint_yaml.empty?
+
+    sentinel_endpoint = YAML.safe_load(sentinel_endpoint_yaml)
+    sentinel_pod = sentinel_endpoint.dig("subsets", 0, "addresses", 0, "targetRef", "name")
+    abort "Error: no sentinel pod name found in endpoint YAML for rfs-#{redis_cluster}-redis" unless sentinel_pod
+
+    puts "Running redis-cli with SENTINEL FAILOVER command on #{sentinel_pod}..."
+    kubectl("exec -c sentinel -it #{sentinel_pod} -- redis-cli -p 26379 SENTINEL FAILOVER mymaster") or abort("Error: failed to failover master")
+
+    # Wait for previous master to become a slave, then kill all its connections
+    puts "Waiting for previous master to become a slave..."
+    200.times do |attempt|
+      role = read_kubectl("exec -c redis -it #{master_pod} -- redis-cli --raw ROLE").lines.first.chomp
+      break if role == "slave"
+
+      abort "Error: previous master pod #{master_pod} did not become a slave within 20 seconds" if attempt == 99
+
+      sleep 0.1
+    end
+
+    # NOTE: We spend 10 seconds doing this since re-labeling of master pod and service DNS propagation can take time
+    puts "Running redis-cli with CLIENT KILL TYPE normal on #{master_pod} for 10 seconds to evict existing connections..."
+    10.times do
+      kubectl "exec -c redis -it #{master_pod} -- redis-cli CLIENT KILL TYPE normal"
+      sleep 1
+    end
+  else
+    # Rely on Reclaim the Stack's sentinel based approach without operator
+    sentinel_pod_yaml = read_kubectl("get pods -l redis.reclaim-the-stack.com/cluster=#{redis_cluster} -l redis.reclaim-the-stack.com/component=sentinel --field-selector=status.phase=Running -o yaml")
+    abort "Error: no sentinel pod found for #{redis_cluster}" if sentinel_pod_yaml.empty?
+
+    sentinel_pod = YAML.safe_load(sentinel_pod_yaml).dig("items", 0, "metadata", "name")
+
+    # https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/#sentinel-commands
+    puts "Running redis-cli with SENTINEL FAILOVER command on #{sentinel_pod}..."
+    kubectl "exec -c sentinel -it #{sentinel_pod} -- redis-cli -p 26379 SENTINEL FAILOVER #{redis_cluster}"
+
+    # TODO: Do the kill connection rigamarole
   end
 end
 
