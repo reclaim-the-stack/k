@@ -165,10 +165,7 @@ def print_commands
   puts "k logs <application> [<type1>, <type2>...]" + gray(" tail application logs")
   puts "k logs:search <application> [<regexp-query>]" + gray(" search application logs via grafana")
   puts "k pg" + gray(" list postgres related commands")
-  puts "k redis:cli <cluster-name> [<arguments for redis-cli>]" + gray(" run redis-cli on redis for a redis cluster")
-  puts "k redis:failover <cluster-name>" + gray(" run FAILOVER command on the current master instance")
-  puts "k redis:url <cluster-name>" + gray(" output the internal URL for a redis cluster")
-  puts "k redis:sentinel-url <cluster-name>" + gray(" output the internal sentinel URL for a redis cluster")
+  puts "k redis" + gray(" list redis related commands")
   puts "k releases <application>" + gray(" lists the past 15 releases for an application")
   puts "k restart <application>" + gray(" restart application deployments")
   puts "k rollback <application>" + gray(" show prompt to rollback an application")
@@ -2246,6 +2243,14 @@ def restart
   end
 end
 
+def redis
+  puts "k redis:cli <cluster-name> [<arguments for redis-cli>]" + gray(" run redis-cli on redis for a redis cluster")
+  puts "k redis:failover <cluster-name>" + gray(" run FAILOVER command on the current master instance")
+  puts "k redis:primaries" + gray(" list all primary redis instances")
+  puts "k redis:sentinel-url <cluster-name>" + gray(" output the internal sentinel URL for a redis cluster")
+  puts "k redis:url <cluster-name>" + gray(" output the internal URL for a redis cluster")
+end
+
 def redis_cli
   redis_cluster = ARGV.delete_at(0)
   abort "Must pass name of redis-cluster, eg. k redis:cli <cluster-name> [<arguments for redis-cli>]" unless redis_cluster
@@ -2281,6 +2286,11 @@ def redis_failover
     kubectl "exec -c redis -it #{master_pod} -- redis-cli CLIENT KILL TYPE normal"
     sleep 1
   end
+end
+
+def redis_primaries
+  puts bold("Redis Primaries")
+  kubectl "get pods -o wide --selector=redisfailovers-role=master"
 end
 
 def redis_url
