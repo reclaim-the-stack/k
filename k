@@ -75,7 +75,7 @@ VERIFIED_PLUGINS = Array.new
 def require_plugin!(plugin)
   return if VERIFIED_PLUGINS.include?(plugin)
 
-  if kubectl?("", plugin:)
+  if kubectl?("", plugin: plugin)
     VERIFIED_PLUGINS << plugin
   else
     abort "Error: kubectl plugin '#{plugin}' not found, please install it via krew"
