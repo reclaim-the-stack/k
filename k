@@ -71,12 +71,35 @@ def bold(string)
   $stdout.tty? ? "\e[1m#{string}\e[22m" : string
 end
 
-def kubectl(command)
-  system "kubectl --context #{KUBECTL_CONTEXT} #{command}"
+VERIFIED_PLUGINS = Array.new
+def require_plugin!(plugin)
+  return if VERIFIED_PLUGINS.include?(plugin)
+
+  if kubectl?("", plugin:)
+    VERIFIED_PLUGINS << plugin
+  else
+    abort "Error: kubectl plugin '#{plugin}' not found, please install it via krew"
+  end
 end
 
-def read_kubectl(command)
-  `kubectl --context #{KUBECTL_CONTEXT} #{command.strip}` # strip to allow leading newline
+# Plugin must appear before --context, hence the separate argument
+def kubectl(command, plugin: nil)
+  require_plugin!(plugin) if plugin
+  cmd = "kubectl #{plugin} --context #{KUBECTL_CONTEXT} #{command}"
+  puts "debug: #{cmd}" if ENV["DEBUG"]
+  system cmd
+end
+
+# Used to check for successful execution of kubectl commands without printing output
+def kubectl?(command, plugin: nil)
+  require_plugin!(plugin) if plugin
+  require "open3"
+  Open3.capture3("kubectl #{plugin} --context #{KUBECTL_CONTEXT} #{command}").last.success?
+end
+
+def read_kubectl(command, plugin: nil)
+  require_plugin!(plugin) if plugin
+  `kubectl #{plugin} --context #{KUBECTL_CONTEXT} #{command.strip}` # strip to allow leading newline
 end
 
 def kubeseal(source_path, destination_path)
@@ -712,7 +735,43 @@ def pg_failover
   cluster = ARGV.delete_at(0)
   abort "Must pass name of cluster, eg. k pg:failover <cluster-name>" unless cluster
 
-  kubectl %(annotate postgrescluster #{cluster} --overwrite postgres-operator.crunchydata.com/trigger-switchover="$(date)")
+  if kubectl?("get cluster.postgresql.cnpg.io #{cluster}")
+    # CloudNativePG
+    status_yaml = read_kubectl("status -o yaml #{cluster}", plugin: "cnpg")
+    abort "Error: cluster '#{cluster}' not found" if status_yaml.empty?
+
+    # {
+    #   "cluster" => {
+    #     "status" => {
+    #       "instancesReportedState" => {
+    #         "<cluster-name>-1": {
+    #           "isPrimary": true,
+    #           "timeLineID": 1
+    #         },
+    #         "<cluster-name>-2": {
+    #           "isPrimary": false,
+    #           "timeLineID": 1
+    #         }
+    #       }
+    #       ...
+    #     }
+    #     ...
+    #   }
+    #   ...
+    # }
+    status = YAML.load(status_yaml)
+    instance_state = status.dig("cluster", "status", "instancesReportedState")
+    non_primary_instance = instance_state.find { |_, state| !state["isPrimary"] }
+    abort "No non-primary instance found for cluster '#{cluster}'" unless non_primary_instance
+
+    puts "Promoting #{non_primary_instance.first} to primary..."
+    kubectl "promote #{cluster} #{non_primary_instance.first}", plugin: "cnpg"
+  elsif kubectl?("get postgrescluster.postgres-operator.crunchydata.com #{cluster}")
+    # PGO
+    kubectl %(annotate postgrescluster #{cluster} --overwrite postgres-operator.crunchydata.com/trigger-switchover="$(date)")
+  else
+    abort "Error: cluster '#{cluster}' not found"
+  end
 end
 
 def pg_patroni
