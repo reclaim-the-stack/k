@@ -166,6 +166,7 @@ def print_commands
   puts "k logs:search <application> [<regexp-query>]" + gray(" search application logs via grafana")
   puts "k node:failover <node-name>" + gray(" failover all databases on a node in a kubernetes cluster")
   puts "k node:purge-pvcs <node-name>" + gray(" delete all PVCs on a node in a kubernetes cluster")
+  puts "k node:pvcs [<node-name>]" + gray(" list PVCs in a kubernetes cluster")
   puts "k pg" + gray(" list postgres related commands")
   puts "k redis" + gray(" list redis related commands")
   puts "k releases <application>" + gray(" lists the past 15 releases for an application")
@@ -2207,6 +2208,34 @@ def generate_resource
 
   puts
   puts "Please inspect and tweak all changes before you commit and push"
+end
+
+def node_pvcs
+  all_pvcs = YAML.load read_kubectl("get pvc --all-namespaces -o yaml")
+
+  pvcs_per_node = all_pvcs.fetch("items").each_with_object({}) do |pvc, hash|
+    node = pvc.dig("metadata", "annotations", "volume.kubernetes.io/selected-node")
+    hash[node] ||= []
+    hash[node] << "#{pvc.dig("metadata", "namespace")}/#{pvc.dig("metadata", "name")}"
+  end
+
+  node = ARGV.delete_at(0)
+  if node
+    pvcs = pvcs_per_node[node]
+    if pvcs
+      puts
+      puts bold(node)
+      puts pvcs
+    else
+      puts "No PVCs found on '#{node}'."
+    end
+  else
+    pvcs_per_node.sort_by(&:first).each do |node, pvcs|
+      puts
+      puts bold(node)
+      puts pvcs
+    end
+  end
 end
 
 # Failover all primary Postgres and Redis databases on a node
