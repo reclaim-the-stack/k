@@ -164,6 +164,7 @@ def print_commands
   puts "k kibana <application>" + gray(" access kibana from an elastic search enabled application")
   puts "k logs <application> [<type1>, <type2>...]" + gray(" tail application logs")
   puts "k logs:search <application> [<regexp-query>]" + gray(" search application logs via grafana")
+  puts "k node:failover <node-name>" + gray(" failover all databases on a node in a kubernetes cluster")
   puts "k pg" + gray(" list postgres related commands")
   puts "k redis" + gray(" list redis related commands")
   puts "k releases <application>" + gray(" lists the past 15 releases for an application")
@@ -2214,6 +2215,72 @@ def generate_resource
 
   puts
   puts "Please inspect and tweak all changes before you commit and push"
+end
+
+# Failover all primary Postgres and Redis databases on a node
+def node_failover
+  node_name = ARGV.delete_at(0)
+  abort "Must pass name of node, eg. k node:failover <node-name>" unless node_name
+
+  node_exists = kubectl?("get node #{node_name}")
+  abort "Error: node '#{node_name}' not found" unless node_exists
+
+  pods_on_node = YAML.unsafe_load(read_kubectl("get pods --field-selector spec.nodeName=#{node_name} -o yaml")).fetch("items")
+
+  primaries = pods_on_node.select do |pod|
+    labels = pod.fetch("metadata").fetch("labels")
+    labels["redis.reclaim-the-stack.com/role"] == "master" ||
+      labels["cnpg.io/instanceRole"] == "primary" ||
+      labels["postgres-operator.crunchydata.com/role"] == "master" ||
+      labels["redisfailovers-role"] == "master"
+  end
+
+  pod_names = primaries.map { |pod| pod.fetch("metadata").fetch("name") }
+
+  if pod_names.empty?
+    puts "No primary databases found on node #{node_name} - aborting."
+    exit
+  end
+
+  puts "Found the following primary databases on node #{node_name}:"
+  puts pod_names
+
+  puts
+  puts "Do you want to failover these databases [y/N]"
+  choice = readline.chomp
+  unless choice.upcase == "Y"
+    puts "Failover aborted!"
+    exit
+  end
+
+  k_executable = __FILE__
+
+  primaries.each do |primary|
+    labels = primary.fetch("metadata").fetch("labels")
+
+    if labels.key?("cnpg.io/instanceRole")
+      cluster_name = labels.fetch("cnpg.io/cluster")
+      puts
+      puts "Failing over CloudnativePG cluster #{cluster_name}..."
+      system "#{k_executable} pg:failover #{cluster_name}"
+    elsif labels.key?("postgres-operator.crunchydata.com/role")
+      cluster_name = labels.fetch("postgres-operator.crunchydata.com/cluster")
+      puts
+      puts "Failing over CrunchyData PostgreSQL cluster #{cluster_name}..."
+      system "#{k_executable} pg:failover #{cluster_name}"
+    elsif labels.key?("redisfailovers-role")
+      cluster_name = labels.fetch("redisfailovers.databases.spotahome.com/name")
+      puts
+      puts "Failing over Spotahome Redis cluster #{cluster_name}..."
+      k_compatible_name = cluster_name.delete_suffix("-redis")
+      system "#{k_executable} redis:failover #{k_compatible_name}"
+    elsif labels.key?("redis.reclaim-the-stack.com/role")
+      cluster_name = labels.fetch("redis.reclaim-the-stack.com/cluster")
+      puts
+      puts "Failing over Reclaim the Stack Redis cluster #{cluster_name}..."
+      system "#{k_executable} redis:failover #{cluster_name}"
+    end
+  end
 end
 
 def restart
