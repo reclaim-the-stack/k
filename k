@@ -92,7 +92,6 @@ end
 
 # Used to check for successful execution of kubectl commands without printing output
 def kubectl?(command, plugin: nil)
-  require_plugin!(plugin) if plugin
   require "open3"
   Open3.capture3("kubectl #{plugin} --context #{KUBECTL_CONTEXT} #{command}").last.success?
 end
@@ -527,7 +526,7 @@ def config_set
 end
 
 def cnpg
-  system "kubectl cnpg --context #{KUBECTL_CONTEXT} #{ARGV.join(" ")}"
+  kubectl ARGV.join(" "), plugin: "cnpg"
 end
 
 def dashboard
