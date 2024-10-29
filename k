@@ -165,6 +165,7 @@ def print_commands
   puts "k logs <application> [<type1>, <type2>...]" + gray(" tail application logs")
   puts "k logs:search <application> [<regexp-query>]" + gray(" search application logs via grafana")
   puts "k node:failover <node-name>" + gray(" failover all databases on a node in a kubernetes cluster")
+  puts "k node:purge-pvcs <node-name>" + gray(" delete all PVCs on a node in a kubernetes cluster")
   puts "k pg" + gray(" list postgres related commands")
   puts "k redis" + gray(" list redis related commands")
   puts "k releases <application>" + gray(" lists the past 15 releases for an application")
@@ -2280,6 +2281,82 @@ def node_failover
       puts "Failing over Reclaim the Stack Redis cluster #{cluster_name}..."
       system "#{k_executable} redis:failover #{cluster_name}"
     end
+  end
+end
+
+def node_purge_pvcs
+  node_name = ARGV.delete_at(0)
+  abort "Must pass name of node, eg. k node:purge-pvcs <node-name>" unless node_name
+
+  node_exists = kubectl?("get node #{node_name}")
+  if node_exists
+    puts "WARNING: This command is intended to be used after a node has been deleted or decommissioned. Are you sure you want to proceed cleaning up PVCs on #{node_name} [y/N]"
+    choice = readline.chomp
+
+    unless choice.upcase == "Y"
+      puts "PVC purge aborted!"
+      exit
+    end
+  end
+
+  all_pvcs = YAML.load read_kubectl("get pvc --all-namespaces -o yaml")
+
+  pvcs_on_node = all_pvcs.fetch("items").select do |pvc|
+    pvc.dig("metadata", "annotations", "volume.kubernetes.io/selected-node") == node_name
+  end
+
+  if pvcs_on_node.empty?
+    puts "No PVCs with a volume.kubernetes.io/selected-node annotation matching '#{node_name}' found - aborting."
+    exit
+  end
+
+  pvc_names = pvcs_on_node.map { |pvc| "#{pvc.dig("metadata", "namespace")}/#{pvc.dig("metadata", "name")}" }
+
+  puts "Purging PVCs bound to #{node_name}..."
+  puts
+  puts bold("PVCs bound to node:")
+  puts pvc_names
+  puts
+  puts "Proceed with permanent deletion of these PVCs [y/N]"
+
+  choice = readline.chomp
+  unless choice.upcase == "Y"
+    puts "PVC purge aborted!"
+    exit
+  end
+
+  pvcs_on_node.each do |pvc|
+    namespace = pvc.dig("metadata", "namespace")
+    name = pvc.dig("metadata", "name")
+    pv_name = pvc.dig("spec", "volumeName")
+
+    puts "Deleting #{namespace}/#{pv_name}..."
+
+    kubectl("delete pvc #{name} -n #{namespace}") or abort("Error: failed to delete PVC #{name}")
+    kubectl("delete pv #{pv_name}") or abort("Error: failed to delete PV #{pv_name}")
+  end
+
+  puts
+  puts "Waiting for finalizers to execute..."
+
+  5.times do
+    sleep 0.5
+    all_pvcs = YAML.load read_kubectl("get pvc --all-namespaces -o yaml")
+
+    pvcs_on_node = all_pvcs.fetch("items").select do |pvc|
+      pvc.dig("metadata", "annotations", "volume.kubernetes.io/selected-node") == node_name
+    end
+
+    break if pvcs_on_node.empty?
+  end
+
+  puts
+  if pvcs_on_node.empty?
+    puts "PVCs purged successfully 💥"
+  else
+    puts "Error: some PVCs could not be deleted"
+    puts "Remaining PVCs bound to node:"
+    puts pvcs_on_node.map { |pvc| "#{pvc.dig("metadata", "namespace")}/#{pvc.dig("metadata", "name")}" }
   end
 end
 
