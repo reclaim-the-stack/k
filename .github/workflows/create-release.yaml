@@ -6,6 +6,7 @@ on:
     paths:
       - k
       - k_pg_proxy
+      - .github/workflows/create-release.yaml
 
 name: Create Release
 
