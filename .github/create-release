@@ -3,32 +3,30 @@
 require "fileutils"
 include FileUtils
 
-TRAVELING_RUBY_BASE_URL = "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20230803/traveling-ruby-20230803-3.2.2"
-
 PLATFORMS = {
   "linux-amd64" => {
-    traveling_ruby: "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20230803/traveling-ruby-20230803-3.2.2-linux-x86_64.tar.gz",
-    kubeseal: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.24.0/kubeseal-0.24.0-linux-amd64.tar.gz",
-    kail: "https://github.com/boz/kail/releases/download/v0.16.1/kail_v0.16.1_linux_amd64v2.tar.gz",
-    yq: "https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_linux_amd64",
+    traveling_ruby: "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20240904/traveling-ruby-20240904-3.3.5-linux-x86_64.tar.gz",
+    kubeseal: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.1/kubeseal-0.27.1-linux-amd64.tar.gz",
+    kail: "https://github.com/boz/kail/releases/download/v0.17.4/kail_v0.17.4_linux_amd64v2.tar.gz",
+    yq: "https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64",
   },
   "linux-arm64" =>{
-    traveling_ruby: "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20230803/traveling-ruby-20230803-3.2.2-linux-arm64.tar.gz",
-    kubeseal: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.24.0/kubeseal-0.24.0-linux-arm.tar.gz",
-    kail: "https://github.com/boz/kail/releases/download/v0.16.1/kail_v0.16.1_linux_arm64.tar.gz",
-    yq: "https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_linux_arm64",
+    traveling_ruby: "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20240904/traveling-ruby-20240904-3.3.5-linux-arm64.tar.gz",
+    kubeseal: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.1/kubeseal-0.27.1-linux-arm.tar.gz",
+    kail: "https://github.com/boz/kail/releases/download/v0.17.4/kail_v0.17.4_linux_arm64.tar.gz",
+    yq: "https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_arm64",
   },
   "darwin-amd64" => {
-    traveling_ruby: "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20230803/traveling-ruby-20230803-3.2.2-osx-x86_64.tar.gz",
-    kubeseal: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.24.0/kubeseal-0.24.0-darwin-amd64.tar.gz",
-    kail: "https://github.com/boz/kail/releases/download/v0.16.1/kail_v0.16.1_darwin_amd64v2.tar.gz",
-    yq: "https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_darwin_amd64",
+    traveling_ruby: "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20240904/traveling-ruby-20240904-3.3.5-osx-x86_64.tar.gz",
+    kubeseal: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.1/kubeseal-0.27.1-darwin-amd64.tar.gz",
+    kail: "https://github.com/boz/kail/releases/download/v0.17.4/kail_v0.17.4_darwin_amd64v2.tar.gz",
+    yq: "https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_darwin_amd64",
   },
   "darwin-arm64" => {
-    traveling_ruby: "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20230803/traveling-ruby-20230803-3.2.2-osx-arm64.tar.gz",
-    kubeseal: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.24.0/kubeseal-0.24.0-darwin-arm64.tar.gz",
-    kail: "https://github.com/boz/kail/releases/download/v0.16.1/kail_v0.16.1_darwin_arm64.tar.gz",
-    yq: "https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_darwin_arm64",
+    traveling_ruby: "https://github.com/YOU54F/traveling-ruby/releases/download/rel-20240904/traveling-ruby-20240904-3.3.5-osx-arm64.tar.gz",
+    kubeseal: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.1/kubeseal-0.27.1-darwin-arm64.tar.gz",
+    kail: "https://github.com/boz/kail/releases/download/v0.17.4/kail_v0.17.4_darwin_arm64.tar.gz",
+    yq: "https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_darwin_arm64",
   },
 }
 
