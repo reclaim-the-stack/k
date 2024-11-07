@@ -2352,8 +2352,12 @@ def node_purge_pvcs
 
     puts "Deleting #{namespace}/#{pv_name}..."
 
-    kubectl("delete pvc #{name} -n #{namespace}") or abort("Error: failed to delete PVC #{name}")
-    kubectl("delete pv #{pv_name}") or abort("Error: failed to delete PV #{pv_name}")
+    # Deleting PVC's is weird in that it's not possible to remove the PVC finalizer until it's
+    # in terminating state. So we have to first trigger the delete to enter terminating state,
+    # then patch the PVC to remove the finalizer for deletion to complete.
+    kubectl("delete pvc #{name} -n #{namespace} --wait=false") or abort("Error: failed to delete PVC #{name}")
+    kubectl("patch pvc #{name} -n #{namespace} -p '{\"metadata\":{\"finalizers\":null}}'")
+    kubectl("delete pv #{pv_name} --ignore-not-found") or abort("Error: failed to delete PV #{pv_name}")
   end
 
   puts
