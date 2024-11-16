@@ -146,6 +146,7 @@ def print_commands
   puts "COMMANDS:"
   puts "k applications [<application>]" + gray(" list applications or show application details")
   puts "k build-and-push" + gray(" build and push a docker image for an application")
+  puts "k clickhouse" + gray(" list clickhouse related commands")
   puts "k config <application> [<search-string>]" + gray(" list ENV vars for an application")
   puts "k config:edit <application>" + gray(" edit ENV vars on an application")
   puts "k config:get <application> <env-var>" + gray(" prints a single environment variable value for an application")
@@ -290,14 +291,73 @@ def build_and_push
   system_or_die command
 end
 
+def clickhouse
+  puts "CLICKHOUSE COMMANDS:"
+  puts "clickhouse:cli <cluster-name> [<query>]" + gray(" open a clickhouse client or runs a query")
+  puts
+  puts "CLICKHOUSE DIAGNOSTICS:"
+  puts "pg:table_size <cluster-name> [<table-name>]" + gray(" show table sizes or details for a specific table")
+end
+
 def clickhouse_cli
   cluster = ARGV.delete_at(0)
-  abort "Must pass name of cluster, eg. k clickhouse <cluster>" unless cluster
+  abort "Must pass name of cluster, eg. k clickhouse <cluster> [<query>]" unless cluster
 
   pod = read_kubectl("get pods -l clickhouse.altinity.com/chi=#{cluster} -o name").lines.first&.strip
   abort "Error: no clickhouse pods found for cluster '#{cluster}'" unless pod
 
-  kubectl "exec -it #{pod} -- clickhouse-client"
+  query = ARGV.join(" ")
+
+  if query.empty?
+    exec "kubectl exec -it #{pod} -- clickhouse client"
+  else
+    exec "kubectl exec -it #{pod} -- clickhouse client --format PrettyCompact --query \"#{query}\""
+  end
+end
+
+# NOTE: the table-name argument is a bit naive since it doesn't distinguish between databases
+def clickhouse_table_size
+  cluster = ARGV.delete_at(0)
+  abort "Must pass name of cluster, eg. clickhouse:table_size <cluster-name> [<table-name>]" unless cluster
+
+  table = ARGV.delete_at(0)
+
+  query =
+    if table
+      puts "#{gray('===')} #{bold(table)}"
+      <<~SQL
+        SELECT
+          name as column,
+          sum(data_uncompressed_bytes) AS uncompressed,
+          sum(data_compressed_bytes) AS compressed,
+          round((compressed / uncompressed) * 100., 2) AS percent,
+          formatReadableSize(uncompressed) as hr_uncompressed,
+          formatReadableSize(compressed) as hr_compressed
+        FROM system.columns
+        WHERE table = '#{table}'
+        GROUP BY name
+        ORDER BY name ASC
+      SQL
+    else
+      puts "#{gray('===')} #{bold('Table Sizes')}"
+      # Use subquery to enable sorting by bytes before making the size human readable
+      <<~SQL
+        SELECT database, table, formatReadableSize(bytes) AS size
+        FROM (
+          SELECT database, table, sum(bytes) AS bytes
+          FROM system.parts
+          WHERE active
+          GROUP BY database, table
+        )
+        ORDER BY bytes DESC
+      SQL
+    end
+
+  require "open3"
+  stdout, _stderr, _status = Open3.capture3("#{__FILE__}", "clickhouse:cli", cluster, query).first
+  puts stdout
+
+  puts gray("Pass a table name as additional argument to zoom in on a specific table") unless table
 end
 
 def contexts
