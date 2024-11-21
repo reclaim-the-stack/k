@@ -909,9 +909,7 @@ def pg_url
   require "base64"
 
   uri = Base64.strict_decode64(secret.fetch("uri"))
-  pgbouncer_uri = Base64.strict_decode64(secret.fetch("pgbouncer-uri")) if secret.key?("pgbouncer-uri")
-  puts "Postgres URI: #{uri}"
-  puts "PgBouncer URI: #{uri}" if pgbouncer_uri
+  puts uri
 end
 
 def pg_bloat
