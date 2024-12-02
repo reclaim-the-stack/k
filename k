@@ -6,6 +6,7 @@
 # KUBESEAL_PATH - path to kubeseal executable, defaults to "kubeseal"
 # YQ_PATH - path to yq executable, defaults to "yq"
 
+require "date" # to protect against YAML bug present in certain psych versions: https://github.com/ruby/psych/pull/695
 require "yaml"
 require "tmpdir"
 require "uri"
