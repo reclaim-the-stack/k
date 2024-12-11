@@ -11,6 +11,14 @@ PROXY_PORT = 10_000
 THREADS = 10
 CONTEXT = ARGV.first || `kubectl config current-context`.strip
 
+def gray(string)
+  $stdout.tty? ? "\e[0;90;49m#{string}\e[0m" : string
+end
+
+def bold(string)
+  $stdout.tty? ? "\e[1m#{string}\e[22m" : string
+end
+
 def parse_startup_message(client_socket)
   length = client_socket.read(4).unpack("L>").first - 4
   version = client_socket.read(4).unpack("L>").first
@@ -184,16 +192,48 @@ def forward(from_socket, to_socket)
   end
 end
 
+# NOTE: this is similar to Pg.cluster_by_name in the k file
+def cluster_by_name(cluster_or_application)
+  # rubocop:disable Layout/LineLength
+  cluster = `kubectl --context #{CONTEXT} get cluster.postgresql.cnpg.io #{cluster_or_application} -o name --ignore-not-found`.chomp
+
+  return cluster.split("/").last.chomp unless cluster.empty?
+
+  # Fall back looking for ClickHouse clusters in an application with the same name
+  clusters = `kubectl --context #{CONTEXT} get cluster.postgresql.cnpg.io -l argocd.argoproj.io/instance=#{cluster_or_application} -o name`
+    .lines
+    .map { |c| c.split("/").last.chomp }
+  # rubocop:enable Layout/LineLength
+
+  if clusters.empty?
+    puts "Error: couldn't find a Postgres cluster named '#{cluster_or_application}'"
+  elsif clusters.length == 1
+    cluster = clusters.first
+    puts gray("Defaulted to Postgres cluster #{bold(cluster)} in application #{bold(cluster_or_application)}.")
+    cluster
+  else
+    $stderr.puts "ERROR: Multiple Postgres clusters found in application #{cluster_or_application}, please specify one of:"
+    $stderr.puts clusters
+  end
+end
+
 def handle_connection(client_socket, connection_number)
   params = parse_startup_message(client_socket)
   database = params.fetch("database")
 
+  cluster_name = cluster_by_name(database)
+
+  unless cluster_name
+    $stderr.puts "Error: no Postgres cluster found for #{cluster_name}"
+    client_socket.close
+    return
+  end
+
   # Start port forward and connect to Kubernetes Postgres
-  primary_pod = `kubectl --context #{CONTEXT} get pod -o name -l postgres-operator.crunchydata.com/cluster=#{database},postgres-operator.crunchydata.com/role=master`.chomp # rubocop:disable Layout/LineLength
-  primary_pod = `kubectl --context #{CONTEXT} get pod -o name -l cnpg.io/cluster==#{database},cnpg.io/instanceRole=primary`.chomp if primary_pod.empty?
+  primary_pod = `kubectl --context #{CONTEXT} get pod -o name -l cnpg.io/cluster==#{cluster_name},cnpg.io/instanceRole=primary`.chomp # rubocop:disable Layout/LineLength
 
   if primary_pod.empty?
-    $stderr.puts "Error: no primary postgres pod found for #{database}"
+    $stderr.puts "Error: no primary postgres pod found for #{cluster_name}"
     client_socket.close
     return
   end
@@ -211,30 +251,14 @@ def handle_connection(client_socket, connection_number)
   authentication_ok = ["R", 8, 0].pack("aL>L>")
   client_socket.write(authentication_ok)
 
-  cluster = `kubectl --context #{CONTEXT} get cluster #{database} -o json`
-  pgo = false
-
-  if cluster.empty?
-    cluster = `kubectl --context #{CONTEXT} get postgrescluster #{database} -o json`
-    pgo = true
-  end
+  cluster = `kubectl --context #{CONTEXT} get cluster.postgresql.cnpg.io #{cluster_name} -o json`
 
   abort "Error: cluster '#{database}' not found" if cluster.empty?
   cluster = JSON.parse(cluster)
 
-  if pgo
-    user ||= cluster.dig("spec", "users", 0, "name")
-    unless user
-      puts "No users found in PostgresCluster spec, using default user '#{database}'"
-      user = database
-    end
-    secret_suffix = "pguser-#{user}"
-  else
-    user = database
-    secret_suffix = "app"
-  end
+  secret_suffix = "app"
 
-  secret = JSON.parse(`kubectl --context #{CONTEXT} get secret #{database}-#{secret_suffix} -o json`).fetch("data")
+  secret = JSON.parse(`kubectl --context #{CONTEXT} get secret #{cluster_name}-#{secret_suffix} -o json`).fetch("data")
 
   send_startup_message(
     pg_socket,
@@ -247,7 +271,7 @@ def handle_connection(client_socket, connection_number)
     client_socket.close
     pg_socket.close
     Process.kill("QUIT", port_forward_pid)
-    puts "Error: Failed to connect to #{database}"
+    puts "Error: Failed to connect to #{cluster_name}"
     return
   end
 
@@ -258,12 +282,12 @@ def handle_connection(client_socket, connection_number)
     if client_forward.alive? && pg_forward.alive?
       sleep 1
     else
-      puts "Disconnecting from #{database}"
+      puts "Disconnecting from #{cluster_name}"
       return
     end
   end
 rescue Errno::ECONNRESET
-  puts "handle_connection: Errno::ECONNRESET handling database #{database}"
+  puts "handle_connection: Errno::ECONNRESET handling database #{cluster_name}"
 ensure
   Process.kill("QUIT", port_forward_pid) rescue nil # rubocop:disable Style/RescueModifier
   client_socket&.close

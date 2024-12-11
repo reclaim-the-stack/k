@@ -305,8 +305,8 @@ module ClickHouse
       abort "Error: couldn't find a ClickHouse cluster named '#{cluster_or_application}'" if clusters.empty?
 
       if clusters.length == 1
-        puts "Defaulted to ClickHouse cluster #{bold(clusters.first)} in application #{bold(cluster_or_application)}."
-        puts
+        STDERR.puts gray("Defaulted to ClickHouse cluster #{bold(clusters.first)} in application #{bold(cluster_or_application)}.")
+        STDERR.puts
         cluster = clusters.first
       else
         puts "Multiple ClickHouse clusters found in application #{cluster_or_application}, please specify one of:"
@@ -723,6 +723,31 @@ def logs_search
 end
 
 module Pg
+  def self.cluster_by_name(cluster_or_application)
+    cluster = read_kubectl("get cluster.postgresql.cnpg.io #{cluster_or_application} -o name --ignore-not-found").chomp
+
+    if cluster.empty?
+      # Fall back looking for ClickHouse clusters in an application with the same name
+      clusters = read_kubectl("get cluster.postgresql.cnpg.io -l argocd.argoproj.io/instance=#{cluster_or_application} -o name")
+        .lines
+        .map { |c| c.split("/").last.chomp }
+
+      abort "Error: couldn't find a Postgres cluster named '#{cluster_or_application}'" if clusters.empty?
+
+      if clusters.length == 1
+        cluster = clusters.first
+        STDERR.puts gray("Defaulted to Postgres cluster #{bold(cluster)} in application #{bold(cluster_or_application)}.")
+        STDERR.puts
+      else
+        puts "Multiple Postgres clusters found in application #{cluster_or_application}, please specify one of:"
+        puts clusters
+        abort
+      end
+    end
+
+    cluster.split("/").last.chomp
+  end
+
   def self.secret_for_cluster(cluster_name, user = nil)
     unless user.nil? || user == "superuser"
       abort "ERROR: CloudNativePG clusters only support default (ie. do not specify) or superuser users"
@@ -767,6 +792,7 @@ module Pg
   end
 
   def self.query_on_primary(cluster, query)
+    cluster = cluster_by_name(cluster)
     secret = secret_for_cluster(cluster)
 
     require "base64"
@@ -781,7 +807,6 @@ def pg
   puts ""
   puts "POSTGRES COMMANDS:"
   puts "pg:failover <cluster-name>"
-  puts "pg:patroni <cluster-name> <patroni-command>"
   puts "pg:password <cluster-name> [superuser]"
   puts "pg:pods"
   puts "pg:primaries"
@@ -803,54 +828,43 @@ def pg_failover
   cluster = ARGV.delete_at(0)
   abort "Must pass name of cluster, eg. k pg:failover <cluster-name>" unless cluster
 
-  if kubectl?("get cluster.postgresql.cnpg.io #{cluster}")
-    # CloudNativePG
-    status_yaml = read_kubectl("status -o yaml #{cluster}", plugin: "cnpg")
-    abort "Error: cluster '#{cluster}' not found" if status_yaml.empty?
+  cluster = Pg.cluster_by_name(cluster)
 
-    # {
-    #   "cluster" => {
-    #     "status" => {
-    #       "instancesReportedState" => {
-    #         "<cluster-name>-1": {
-    #           "isPrimary": true,
-    #           "timeLineID": 1
-    #         },
-    #         "<cluster-name>-2": {
-    #           "isPrimary": false,
-    #           "timeLineID": 1
-    #         }
-    #       }
-    #       ...
-    #     }
-    #     ...
-    #   }
-    #   ...
-    # }
-    status = YAML.load(status_yaml)
-    instance_state = status.dig("cluster", "status", "instancesReportedState")
-    non_primary_instance = instance_state.find { |_, state| !state["isPrimary"] }
-    abort "No non-primary instance found for cluster '#{cluster}'" unless non_primary_instance
+  status_yaml = read_kubectl("status -o yaml #{cluster}", plugin: "cnpg")
 
-    puts "Promoting #{non_primary_instance.first} to primary..."
-    kubectl "promote #{cluster} #{non_primary_instance.first}", plugin: "cnpg"
-  else
-    abort "Error: cluster '#{cluster}' not found"
-  end
-end
+  # {
+  #   "cluster" => {
+  #     "status" => {
+  #       "instancesReportedState" => {
+  #         "<cluster-name>-1": {
+  #           "isPrimary": true,
+  #           "timeLineID": 1
+  #         },
+  #         "<cluster-name>-2": {
+  #           "isPrimary": false,
+  #           "timeLineID": 1
+  #         }
+  #       }
+  #       ...
+  #     }
+  #     ...
+  #   }
+  #   ...
+  # }
+  status = YAML.load(status_yaml)
+  instance_state = status.dig("cluster", "status", "instancesReportedState")
+  non_primary_instance = instance_state.find { |_, state| !state["isPrimary"] }
+  abort "No non-primary instance found for cluster '#{cluster}'" unless non_primary_instance
 
-def pg_patroni
-  cluster = ARGV.delete_at(0)
-  abort "Must pass name of cluster, eg. k pg:patroni <cluster-name> <command>" unless cluster
-
-  patroni_command = ARGV.delete_at(0) || "--help"
-
-  Pg.exec_on_primary(cluster, "patronictl #{patroni_command}")
+  puts "Promoting #{non_primary_instance.first} to primary..."
+  kubectl "promote #{cluster} #{non_primary_instance.first}", plugin: "cnpg"
 end
 
 def pg_password
   cluster = ARGV.delete_at(0)
-  abort "Must pass name of cluster, eg. k pg:password <cluster-name> [<user>]" unless cluster
+  abort "Must pass name of cluster, eg. k pg:password <cluster-name> [superuser]" unless cluster
+
+  cluster = Pg.cluster_by_name(cluster)
 
   user = ARGV.delete_at(0)
 
@@ -876,7 +890,9 @@ end
 
 def pg_psql
   cluster_name = ARGV.delete_at(0)
-  abort "Must pass name of cluster, eg. k pg:psql <cluster-name> [<user>]" unless cluster_name
+  abort "Must pass name of cluster, eg. k pg:psql <cluster-name> [superuser]" unless cluster_name
+
+  cluster_name = Pg.cluster_by_name(cluster_name)
 
   user = ARGV.delete_at(0)
 
@@ -895,7 +911,17 @@ def pg_resources
   cluster = ARGV.delete_at(0)
   abort "Must pass name of cluster, eg. k pg:resources <cluster-name>" unless cluster
 
-  kubectl "get all --selector=cnpg.io/cluster=#{cluster}"
+  cluster = Pg.cluster_by_name(cluster)
+
+  puts gray("===") + " " + bold("Pods")
+  puts
+  kubectl "get pods --selector=cnpg.io/cluster=#{cluster}"
+  puts
+  puts gray("===") + " " + bold("Services")
+  puts
+  kubectl "get services --selector=cnpg.io/cluster=#{cluster}"
+  puts
+  puts gray("===") + " " + bold("Secrets")
   puts
   kubectl "get secrets --selector=cnpg.io/cluster=#{cluster}"
 end
@@ -903,6 +929,8 @@ end
 def pg_url
   cluster_name = ARGV.delete_at(0)
   abort "Must pass name of cluster, eg. k pg:url <cluster-name> [<user>]" unless cluster_name
+
+  cluster_name = Pg.cluster_by_name(cluster_name)
 
   user = ARGV.delete_at(0)
   secret = Pg.secret_for_cluster(cluster_name, user)
