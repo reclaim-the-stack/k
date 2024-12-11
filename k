@@ -292,9 +292,41 @@ def build_and_push
   system_or_die command
 end
 
+module ClickHouse
+  def self.cluster_by_name(cluster_or_application)
+    cluster = read_kubectl("get clickhouseinstallations #{cluster_or_application} -o name --ignore-not-found")
+
+    if cluster.empty?
+      # Fall back looking for ClickHouse clusters in an application with the same name
+      clusters = read_kubectl("get clickhouseinstallations -l argocd.argoproj.io/instance=#{cluster_or_application} -o name")
+        .lines
+        .map { |c| c.split("/").last.chomp }
+
+      abort "Error: couldn't find a ClickHouse cluster named '#{cluster_or_application}'" if clusters.empty?
+
+      if clusters.length == 1
+        puts "Defaulted to ClickHouse cluster #{bold(clusters.first)} in application #{bold(cluster_or_application)}."
+        puts
+        cluster = clusters.first
+      else
+        puts "Multiple ClickHouse clusters found in application #{cluster_or_application}, please specify one of:"
+        puts clusters
+        abort
+      end
+    end
+
+    cluster.split("/").last.chomp
+  end
+
+  def self.pods_by_name(cluster_or_application)
+    cluster = cluster_by_name(cluster_or_application)
+    read_kubectl("get pods -l clickhouse.altinity.com/chi=#{cluster} -o name").lines.map(&:chomp)
+  end
+end
+
 def clickhouse
   puts "CLICKHOUSE COMMANDS:"
-  puts "clickhouse:cli <cluster-name> [<query>]" + gray(" open a clickhouse client or runs a query")
+  puts "clickhouse:cli <cluster-name> [<replica-number>] [<query>]" + gray(" open a clickhouse client or runs a query")
   puts
   puts "CLICKHOUSE DIAGNOSTICS:"
   puts "pg:table_size <cluster-name> [<table-name>]" + gray(" show table sizes or details for a specific table")
@@ -302,17 +334,26 @@ end
 
 def clickhouse_cli
   cluster = ARGV.delete_at(0)
-  abort "Must pass name of cluster, eg. k clickhouse <cluster> [<query>]" unless cluster
+  abort "Must pass name of cluster, eg. k clickhouse <cluster> [<replica-number>] [<query>]" unless cluster
 
-  pod = read_kubectl("get pods -l clickhouse.altinity.com/chi=#{cluster} -o name").lines.first&.strip
-  abort "Error: no clickhouse pods found for cluster '#{cluster}'" unless pod
+  maybe_replica_number = ARGV.delete_at(0)
+  if maybe_replica_number.to_s[/^\d+$/]
+    replica_number = maybe_replica_number.to_i
+  else
+    ARGV.unshift(maybe_replica_number)
+    replica_number = 0
+  end
+
+  pods = ClickHouse.pods_by_name(cluster)
+  pod = pods.sort[replica_number]
+  abort "Error: no replica number #{replica_number} found for cluster '#{cluster}'" unless pod
 
   query = ARGV.join(" ")
 
   if query.empty?
-    exec "kubectl exec -it #{pod} -- clickhouse client"
+    exec "kubectl exec -it #{pod} -c clickhouse -- clickhouse client"
   else
-    exec "kubectl exec -it #{pod} -- clickhouse client --format PrettyCompact --query \"#{query}\""
+    exec "kubectl exec -it #{pod} -c clickhouse -- clickhouse client --format PrettyCompact --query \"#{query}\""
   end
 end
 
@@ -2308,7 +2349,8 @@ def node_failover
   pods_on_node = YAML.unsafe_load(read_kubectl("get pods --field-selector spec.nodeName=#{node_name} -o yaml")).fetch("items")
 
   primaries = pods_on_node.select do |pod|
-    labels = pod.fetch("metadata").fetch("labels")
+    labels = pod.fetch("metadata")["labels"]
+    next false unless labels
     labels["redis.reclaim-the-stack.com/role"] == "master" ||
       labels["cnpg.io/instanceRole"] == "primary" ||
       labels["postgres-operator.crunchydata.com/role"] == "master" ||
