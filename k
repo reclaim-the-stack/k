@@ -724,27 +724,6 @@ end
 
 module Pg
   def self.secret_for_cluster(cluster_name, user = nil)
-    # Prefer cloudnativepg cluster if available
-    return cloudnative_secret_for_cluster(cluster_name, user) if kubectl?("get cluster.postgresql.cnpg.io #{cluster_name}")
-
-    cluster = read_kubectl("get postgrescluster #{cluster_name} -o yaml --ignore-not-found")
-    abort "Error: postgrescluster '#{cluster_name}' not found" if cluster.empty?
-
-    cluster = YAML.load(cluster)
-    user ||= cluster.dig("spec", "users", 0, "name")
-    unless user
-      puts "No users found in PostgresCluster spec, using default user '#{cluster_name}'"
-      user = cluster_name
-    end
-
-    secret = read_kubectl("get secret #{cluster_name}-pguser-#{user} -o yaml")
-
-    abort "ERROR: Could not find user '#{user}' in cluster '#{cluster_name}'" if secret.empty?
-
-    YAML.load(secret).fetch("data")
-  end
-
-  def self.cloudnative_secret_for_cluster(cluster_name, user = nil)
     unless user.nil? || user == "superuser"
       abort "ERROR: CloudNativePG clusters only support default (ie. do not specify) or superuser users"
     end
@@ -781,12 +760,6 @@ module Pg
   def self.exec_on_primary(cluster, command)
     container = "postgres"
     primary_pod_name = read_kubectl("get pod --selector=cnpg.io/instanceRole=primary,cnpg.io/cluster=#{cluster} -o name").chomp
-
-    # Fallback on PGO cluster
-    if primary_pod_name.empty?
-      primary_pod_name = read_kubectl("get pod --selector=postgres-operator.crunchydata.com/role=master,postgres-operator.crunchydata.com/cluster=#{cluster} -o name").chomp
-      container = "database"
-    end
 
     abort "Error: no primary pod found for cluster '#{cluster}' to run command on" if primary_pod_name.empty?
 
@@ -861,9 +834,6 @@ def pg_failover
 
     puts "Promoting #{non_primary_instance.first} to primary..."
     kubectl "promote #{cluster} #{non_primary_instance.first}", plugin: "cnpg"
-  elsif kubectl?("get postgrescluster.postgres-operator.crunchydata.com #{cluster}")
-    # PGO
-    kubectl %(annotate postgrescluster #{cluster} --overwrite postgres-operator.crunchydata.com/trigger-switchover="$(date)")
   else
     abort "Error: cluster '#{cluster}' not found"
   end
@@ -893,16 +863,10 @@ def pg_password
 end
 
 def pg_pods
-  puts bold("PGO")
-  kubectl "get pods -o wide --selector=postgres-operator.crunchydata.com/data=postgres"
-  puts "", bold("CloudNativePG")
   kubectl "get pods -o wide --selector=cnpg.io/podRole=instance"
 end
 
 def pg_primaries
-  puts bold("PGO")
-  kubectl "get pods -o wide --selector=postgres-operator.crunchydata.com/role=master"
-  puts "", bold("CloudNativePG")
   kubectl "get pods -o wide --selector=cnpg.io/instanceRole=primary"
 end
 
@@ -931,13 +895,8 @@ def pg_resources
   cluster = ARGV.delete_at(0)
   abort "Must pass name of cluster, eg. k pg:resources <cluster-name>" unless cluster
 
-  puts bold("PGO")
-  kubectl "get all --selector=postgres-operator.crunchydata.com/cluster=#{cluster}"
-  puts ""
-  kubectl "get secrets --selector=postgres-operator.crunchydata.com/cluster=#{cluster}"
-  puts "", bold("CloudNativePG")
   kubectl "get all --selector=cnpg.io/cluster=#{cluster}"
-  puts ""
+  puts
   kubectl "get secrets --selector=cnpg.io/cluster=#{cluster}"
 end
 
@@ -2353,7 +2312,6 @@ def node_failover
     next false unless labels
     labels["redis.reclaim-the-stack.com/role"] == "master" ||
       labels["cnpg.io/instanceRole"] == "primary" ||
-      labels["postgres-operator.crunchydata.com/role"] == "master" ||
       labels["redisfailovers-role"] == "master"
   end
 
@@ -2384,11 +2342,6 @@ def node_failover
       cluster_name = labels.fetch("cnpg.io/cluster")
       puts
       puts "Failing over CloudnativePG cluster #{cluster_name}..."
-      system "#{k_executable} pg:failover #{cluster_name}"
-    elsif labels.key?("postgres-operator.crunchydata.com/role")
-      cluster_name = labels.fetch("postgres-operator.crunchydata.com/cluster")
-      puts
-      puts "Failing over CrunchyData PostgreSQL cluster #{cluster_name}..."
       system "#{k_executable} pg:failover #{cluster_name}"
     elsif labels.key?("redisfailovers-role")
       cluster_name = labels.fetch("redisfailovers.databases.spotahome.com/name")
