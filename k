@@ -94,7 +94,9 @@ end
 # Used to check for successful execution of kubectl commands without printing output
 def kubectl?(command, plugin: nil)
   require "open3"
-  Open3.capture3("kubectl #{plugin} --context #{KUBECTL_CONTEXT} #{command}").last.success?
+  cmd = "kubectl #{plugin} --context #{KUBECTL_CONTEXT} #{command}"
+  puts "debug: #{cmd}" if ENV["DEBUG"]
+  Open3.capture3(cmd).last.success?
 end
 
 def read_kubectl(command, plugin: nil)
