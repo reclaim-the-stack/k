@@ -180,6 +180,7 @@ def print_commands
   puts "k secrets [<specific-secret>]" + gray(" lists secrets including usage details")
   puts "k secrets:create <secret-name>" + gray(" create a new secret")
   puts "k secrets:edit <secret-name>" + gray(" edit a secret")
+  puts "k secrets:get <secret-name> <key>" + gray(" get a single secret value")
   puts "k secrets:set <secret-name> <key>=<value> [<key2>=<value2> ...]" + gray(" set new secret values")
   puts "k secrets:unset <secret-name> <key> [<key2> ...]" + gray(" unset / delete secret values")
   puts "k update" + gray(" update k to the latest version")
@@ -1689,6 +1690,31 @@ def secrets_edit
 
     system %(git commit -a -m "#{commit_message}" --quiet)
     safe_git_push
+  end
+end
+
+def secrets_get
+  if ARGV.length != 2
+    puts "Usage: k secrets:get <secret-name> <key>"
+    exit
+  end
+
+  shared_secret = ARGV.delete_at(0)
+  key = ARGV.delete_at(0)
+
+  in_argo_repo do
+    secret_path = "applications/shared-secrets/#{shared_secret}.yaml"
+    abort "No shared secret found at '#{secret_path}'" unless File.exist?(secret_path)
+
+    kubernetes_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} -o yaml")
+    secret = kubernetes_secret["data"]
+
+    abort "Error: key '#{key}' not found in secret '#{shared_secret}'" unless secret
+
+    require "base64"
+
+    value = Base64.strict_decode64(secret[key])
+    puts value
   end
 end
 
