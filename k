@@ -1292,7 +1292,7 @@ def config_edit
     when 0
       exit
     when 1
-      puts "To edit #{application} environment via values.yaml please manually edit https://#{GIT_HOST}/#{ORGANIZATION}/#{REPO_NAME}/blob/master/applications/#{application}/values.yaml and open a Pull Request for review." # rubocop:disable Layout/LineLength
+      puts "To edit #{application} environment via values.yaml please manually edit applications/#{application}/values.yaml in your gitops repo and open a Pull Request for review." # rubocop:disable Layout/LineLength
     else
       selected_secret = shared_secrets[input - 2]
       puts "Editing shared secret: #{selected_secret}..."
