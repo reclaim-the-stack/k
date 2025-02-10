@@ -169,7 +169,7 @@ def print_commands
   puts "k logs <application> [<type1>, <type2>...]" + gray(" tail application logs")
   puts "k logs:search <application> [<regexp-query>]" + gray(" search application logs via grafana")
   puts "k node:failover <node-name>" + gray(" failover all databases on a node in a kubernetes cluster")
-  puts "k node:purge-pvcs <node-name>" + gray(" delete all PVCs on a node in a kubernetes cluster")
+  puts "k node:purge-pvcs <node-name> [specific-pvc]" + gray(" delete all PVCs on a node in a kubernetes cluster")
   puts "k node:pvcs [<node-name>]" + gray(" list PVCs in a kubernetes cluster")
   puts "k pg" + gray(" list postgres related commands")
   puts "k redis" + gray(" list redis related commands")
@@ -2464,18 +2464,7 @@ end
 
 def node_purge_pvcs
   node_name = ARGV.delete_at(0)
-  abort "Must pass name of node, eg. k node:purge-pvcs <node-name>" unless node_name
-
-  node_exists = kubectl?("get node #{node_name}")
-  if node_exists
-    puts "WARNING: This command is intended to be used after a node has been deleted or decommissioned. Are you sure you want to proceed cleaning up PVCs on #{node_name} [y/N]"
-    choice = readline.chomp
-
-    unless choice.upcase == "Y"
-      puts "PVC purge aborted!"
-      exit
-    end
-  end
+  abort "Must pass name of node, eg. k node:purge-pvcs <node-name> [specific-pvc]" unless node_name
 
   all_pvcs = YAML.load read_kubectl("get pvc --all-namespaces -o yaml")
 
@@ -2484,8 +2473,17 @@ def node_purge_pvcs
   end
 
   if pvcs_on_node.empty?
-    puts "No PVCs with a volume.kubernetes.io/selected-node annotation matching '#{node_name}' found - aborting."
+    puts "No PVCs with a volume.kubernetes.io/selected-node annotation matching '#{node_name}' found."
     exit
+  end
+
+  specific_pvc = ARGV.delete_at(0)
+  if specific_pvc
+    pvcs_on_node.select! do |pvc|
+      name, namespace = pvc.fetch("metadata").values_at("name", "namespace")
+      name == specific_pvc || "#{namespace}/#{name}" == specific_pvc
+    end
+    abort "Error: no PVC named '#{specific_pvc}' found on node '#{node_name}'" if pvcs_on_node.empty?
   end
 
   pvc_names = pvcs_on_node.map { |pvc| "#{pvc.dig("metadata", "namespace")}/#{pvc.dig("metadata", "name")}" }
@@ -2517,6 +2515,8 @@ def node_purge_pvcs
     kubectl("patch pvc #{name} -n #{namespace} -p '{\"metadata\":{\"finalizers\":null}}'")
     kubectl("delete pv #{pv_name} --ignore-not-found") or abort("Error: failed to delete PV #{pv_name}")
   end
+
+  return if specific_pvc
 
   puts
   puts "Waiting for finalizers to execute..."
