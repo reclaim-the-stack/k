@@ -177,6 +177,7 @@ def print_commands
   puts "k restart <application>" + gray(" restart application deployments")
   puts "k rollback <application>" + gray(" show prompt to rollback an application")
   puts "k run <application> <command>" + gray(" run a command using a one off pod")
+  puts "k scale <application> <deployment>:<replicas>" + gray(" scale a deployment in an application")
   puts "k secrets [<specific-secret>]" + gray(" lists secrets including usage details")
   puts "k secrets:create <secret-name>" + gray(" create a new secret")
   puts "k secrets:edit <secret-name>" + gray(" edit a secret")
@@ -1599,6 +1600,53 @@ def rollback
 
     domain = detect_deploy_domain("argocd")
     puts "Follow progress at: https://argocd.#{domain}/applications/argocd/#{application}?resource=health%3AProgressing"
+  end
+end
+
+def scale
+  application = ARGV.delete_at(0)
+
+  if application.nil? || ARGV.empty?
+    puts "DESCRIPTION:"
+    puts "Scale number of replicas of application deployments."
+    puts
+    puts "USAGE:"
+    puts "k scale <application> <deployment1>:<replicas1> [<deployment2>:<replicas2> ...]"
+    puts
+    puts "EXAMPLE:"
+    puts "k scale myapp web:2 solidQueue:3"
+    exit
+  end
+
+  # validate input
+  deployment_and_replicas = ARGV.map do |arg|
+    deployment, replicas = arg.split(":")
+    abort "Error: invalid input '#{arg}', must be in the form <deployment>:<replicas>" unless replicas&.match?(/^\d+$/)
+
+    [deployment, replicas.to_i]
+  end
+
+  in_argo_repo do
+    values_path = "applications/#{application}/values.yaml"
+    abort "Error: no application named '#{application}' found in repo" unless File.exist?(values_path)
+    values = YAML.load_file(values_path)
+
+    deployment_and_replicas.each do |deployment, replicas|
+      deployment_config = values.dig("deployments", deployment)
+      abort "Error: no deployment named '#{deployment}' found in #{values_path}" unless deployment_config
+    end
+
+    puts "Scaling #{bold(application)} deployments:"
+    deployment_and_replicas.each do |deployment, replicas|
+      puts "#{deployment} to #{replicas} replicas"
+
+      # Use yq to update the values.yaml file to prevent formatting issues
+      system_or_die %(#{yq_executable} -i ".deployments.#{deployment}.replicas = #{replicas}" #{values_path})
+    end
+
+    message = deployment_and_replicas.map { |deployment, replicas| "#{deployment}:#{replicas}" }.join(" ")
+    system_or_die %(git commit -a -m "#{application}: scale #{message}" --quiet)
+    safe_git_push
   end
 end
 
