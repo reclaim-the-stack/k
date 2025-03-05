@@ -2770,7 +2770,7 @@ def lookup_latest_releases(application)
   git_log = `
     git log \
       -n 15 \
-      --pretty=format:'%H<col>%aN<col>%ad<col>%ar<col>%s<col>%b<row>' \
+      --pretty=format:'%H<col>%aN<col>%aD<col>%ar<col>%s<col>%b<row>' \
       --follow -- applications/#{application}/values.yaml
   `
   release_struct = Struct.new(:sha, :pretty_sha, :author, :time, :relative_time, :subject, :body)
@@ -2782,7 +2782,7 @@ def lookup_latest_releases(application)
       sha,
       sha[0..10],
       author,
-      Time.parse(time),
+      Time.parse(time).getlocal,
       relative_time,
       subject.delete_prefix("#{application}: "),
       body,
