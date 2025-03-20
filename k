@@ -1606,15 +1606,35 @@ end
 def scale
   application = ARGV.delete_at(0)
 
-  if application.nil? || ARGV.empty?
+  if application.nil?
     puts "DESCRIPTION:"
     puts "Scale number of replicas of application deployments."
     puts
     puts "USAGE:"
-    puts "k scale <application> <deployment1>:<replicas1> [<deployment2>:<replicas2> ...]"
+    puts "k scale <application> " + gray("# List deployments")
+    puts "k scale <application> <deployment1>:<replicas1> [<deployment2>:<replicas2> ...] " + gray("# Scale deployments")
     puts
     puts "EXAMPLE:"
     puts "k scale myapp web:2 solidQueue:3"
+    exit
+  end
+
+  # Just list deployments if no deployments are given
+  if ARGV.empty?
+    in_argo_repo do
+      values_path = "applications/#{application}/values.yaml"
+      abort "Error: no application named '#{application}' found in repo" unless File.exist?(values_path)
+      values = YAML.load_file(values_path)
+
+      puts
+      puts "#{gray('===')} #{bold(application)}"
+      deployments = values.fetch("deployments", {}).map do |deployment, config|
+        [deployment, config.fetch("replicas")].join(":")
+      end
+
+      puts deployments.join(" ")
+    end
+
     exit
   end
 
