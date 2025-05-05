@@ -2617,7 +2617,7 @@ def redis_cli
       name
     else
       # Rely on Reclaim the Stack's sentinel based approach without operator
-      sentinel_pod_yaml = read_kubectl("get pods -l redis.reclaim-the-stack.com/cluster=#{redis_cluster} -l redis.reclaim-the-stack.com/component=sentinel --field-selector=status.phase=Running -o yaml")
+      sentinel_pod_yaml = read_kubectl("get pods -l redis.reclaim-the-stack.com/cluster=#{redis_cluster},redis.reclaim-the-stack.com/component=sentinel --field-selector=status.phase=Running -o yaml")
 
       sentinel_pod = YAML.safe_load(sentinel_pod_yaml).dig("items", 0, "metadata", "name")
       abort "Error: no sentinel pod found for '#{redis_cluster}'" unless sentinel_pod
@@ -2702,7 +2702,7 @@ def redis_failover
     end
   else
     # Rely on Reclaim the Stack's sentinel based approach without operator
-    sentinel_pod_yaml = read_kubectl("get pods -l redis.reclaim-the-stack.com/cluster=#{redis_cluster} -l redis.reclaim-the-stack.com/component=sentinel --field-selector=status.phase=Running -o yaml")
+    sentinel_pod_yaml = read_kubectl("get pods -l redis.reclaim-the-stack.com/cluster=#{redis_cluster},redis.reclaim-the-stack.com/component=sentinel --field-selector=status.phase=Running -o yaml")
     abort "Error: no sentinel pod found for #{redis_cluster}" if sentinel_pod_yaml.empty?
 
     sentinel_pod = YAML.safe_load(sentinel_pod_yaml).dig("items", 0, "metadata", "name")
