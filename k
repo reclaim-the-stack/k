@@ -824,7 +824,7 @@ def pg
   puts "pg:cache <cluster-name>"
   puts "pg:index_usage <cluster-name>"
   puts "pg:seq_scans <cluster-name>"
-  puts "pg:table_size <cluster-name>"
+  puts "pg:table_size <cluster-name> [table-name]"
   puts "pg:unused_indexes <cluster-name>"
 end
 
@@ -1052,6 +1052,7 @@ def pg_seq_scans
   cluster = ARGV.delete_at(0)
   abort "Must pass name of cluster, eg. pg:seq_scans <cluster-name>" unless cluster
 
+  puts
   Pg.query_on_primary cluster, <<~SQL
     SELECT relname AS name,
       seq_scan as count
@@ -1063,18 +1064,56 @@ end
 
 def pg_table_size
   cluster = ARGV.delete_at(0)
-  abort "Must pass name of cluster, eg. pg:table_size <cluster-name>" unless cluster
+  abort "Must pass name of cluster, eg. pg:table_size <cluster-name> [table-name]" unless cluster
 
-  Pg.query_on_primary cluster, <<~SQL
-    SELECT c.relname AS name,
-      pg_size_pretty(pg_table_size(c.oid)) AS size
-    FROM pg_class c
-    LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
-    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-    AND n.nspname !~ '^pg_toast'
-    AND c.relkind='r'
-    ORDER BY pg_table_size(c.oid) DESC
-  SQL
+  table = ARGV.delete_at(0)
+
+  puts
+
+  if table
+    # Output table name followed by columns and their approximate sizes
+    puts "#{gray('===')} #{bold(table)}"
+
+    Pg.query_on_primary cluster, <<~SQL
+      WITH
+      -- 1) get the avg_width for each column from the last ANALYZE
+      col_stats AS (
+        SELECT
+          attname AS column_name,
+          avg_width
+        FROM pg_stats
+        WHERE tablename = '#{table}'
+      ),
+
+      -- 2) grab the planner’s row estimate for the table
+      est_rows AS (
+        SELECT
+          reltuples::bigint AS row_estimate
+        FROM pg_class
+        WHERE relname = '#{table}'
+      )
+
+      SELECT
+        c.column_name,
+        pg_size_pretty((c.avg_width * e.row_estimate)::bigint) AS estimated_size
+      FROM col_stats c
+      CROSS JOIN est_rows e
+      ORDER BY estimated_size DESC;
+    SQL
+  else
+    Pg.query_on_primary cluster, <<~SQL
+      SELECT
+        c.relname         AS table_name,
+        pg_size_pretty(pg_table_size(c.oid))   AS table_size,
+        (c.reltuples::bigint)                  AS row_estimate
+      FROM pg_class c
+      LEFT JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+        AND n.nspname !~ '^pg_toast'
+        AND c.relkind = 'r'
+      ORDER BY pg_table_size(c.oid) DESC;
+    SQL
+  end
 end
 
 def pg_unused_indexes
