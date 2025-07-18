@@ -1,3 +1,1 @@
-- brew detection for #update can fail on old brew versions where k is located in `/usr/local/bin/k`
-- use yq for nicer example yaml output?
-- try injecting example values.yaml automatically
+- How is Tebako for app bundling?
