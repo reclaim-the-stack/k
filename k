@@ -2183,7 +2183,7 @@ def generate_application
 
   application = ARGV.delete_at(0)
   abort "Must pass name of application to generate, eg. k generate application <application-name>" unless application
-  abort "Error: Application name must only contain lower-case alphanumeric characters or '-'" unless application[/^[a-z-]+$/]
+  abort "Error: Application name must only contain lower-case alphanumeric characters or '-'" unless application[/^[a-z0-9-]+$/]
 
   directory = "applications/#{application}"
 
