@@ -2453,7 +2453,7 @@ def generate_resource
   end
 
   # Handle env:
-  if template_values["env"].any?
+  if template_values["env"].to_a.any?
     new_env = template_values_string.match(/^(env:.*?)(\n\S|\z)/m)[1]
     values_string.sub!(/^env:.*/, new_env)
 
