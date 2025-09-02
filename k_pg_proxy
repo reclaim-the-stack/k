@@ -11,6 +11,16 @@ PROXY_PORT = 10_000
 THREADS = 10
 CONTEXT = ARGV.first || `kubectl config current-context`.strip
 
+if ENV["K_LISTEN_ON_ALL_INTERFACES"] == "true"
+  BIND_HOST = "0.0.0.0"
+  KUBECTL_ADDRESS_FLAG = " --address 0.0.0.0"
+  HOSTNAME = Socket.gethostname
+else
+  BIND_HOST = "127.0.0.1"
+  KUBECTL_ADDRESS_FLAG = ""
+  HOSTNAME = "localhost"
+end
+
 def gray(string)
   $stdout.tty? ? "\e[0;90;49m#{string}\e[0m" : string
 end
@@ -240,7 +250,7 @@ def handle_connection(client_socket, connection_number)
 
   port_forward_port = PROXY_PORT + connection_number
   port_forward_pid = spawn(
-    "kubectl --context #{CONTEXT} port-forward #{primary_pod} #{port_forward_port}:5432",
+    "kubectl --context #{CONTEXT} port-forward #{primary_pod} #{port_forward_port}:5432#{KUBECTL_ADDRESS_FLAG}",
     err: File::NULL,
   )
   Process.detach(port_forward_pid)
@@ -294,12 +304,12 @@ ensure
   pg_socket&.close
 end
 
-puts "Listening for Postgres connections on localhost:#{PROXY_PORT}"
+puts "Listening for Postgres connections on #{HOSTNAME}:#{PROXY_PORT}"
 puts "Just pass the name of the kubernetes database and leave the rest to me!"
 puts ""
 puts "EXAMPLE:"
-puts "psql -h localhost -p #{PROXY_PORT} -d mynewsdesk-staging"
-server = TCPServer.new(PROXY_PORT)
+puts "psql -h #{HOSTNAME} -p #{PROXY_PORT} -d mynewsdesk-staging"
+server = TCPServer.new(BIND_HOST, PROXY_PORT)
 connection_number = 0
 
 loop do
