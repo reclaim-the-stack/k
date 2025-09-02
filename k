@@ -5,11 +5,17 @@
 # KAIL_PATH - path to kail executable, defaults to "kail"
 # KUBESEAL_PATH - path to kubeseal executable, defaults to "kubeseal"
 # YQ_PATH - path to yq executable, defaults to "yq"
+# K_LISTEN_ON_ALL_INTERFACES - if set truthy, listen on 0.0.0.0 for local forwards
 
 require "date" # to protect against YAML bug present in certain psych versions: https://github.com/ruby/psych/pull/695
 require "yaml"
 require "tmpdir"
 require "uri"
+require "socket"
+
+LISTEN_ON_ALL_INTERFACES = %w[1 true t yes y on].include?(ENV.fetch("K_LISTEN_ON_ALL_INTERFACES", "").downcase)
+KUBECTL_ADDRESS_FLAG = LISTEN_ON_ALL_INTERFACES ? " --address 0.0.0.0" : ""
+HOSTNAME = LISTEN_ON_ALL_INTERFACES ? Socket.gethostname : "localhost"
 
 # rubocop:disable Style/StringConcatenation
 
@@ -599,7 +605,7 @@ def kibana
     # If we can connect to the port another kibana is already active and we skip to the next port
     next if TCPSocket.new("127.0.0.1", port).close.nil? rescue false # rubocop:disable Style/RescueModifier
 
-    puts "Making kibana accessible at: http://localhost:#{port}/app/monitoring#/overview"
+    puts "Making kibana accessible at: http://#{HOSTNAME}:#{port}/app/monitoring#/overview"
     if system "which pbcopy > /dev/null 2>&1"
       puts "Storing kibana password in clipboard..."
       puts ""
@@ -612,7 +618,7 @@ def kibana
       puts "Login with username 'elastic' and paste the password '#{password}'"
     end
     puts ""
-    kubectl "port-forward service/#{application}-kb-http #{port}:5601"
+    kubectl "port-forward service/#{application}-kb-http #{port}:5601#{KUBECTL_ADDRESS_FLAG}"
   end
 end
 
