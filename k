@@ -99,6 +99,18 @@ def kubectl?(command, plugin: nil)
   Open3.capture3(cmd).last.success?
 end
 
+def resources_for_argocd_application(kind, application)
+  yaml_output = read_kubectl("get #{kind} -o yaml")
+  resources = YAML.load(yaml_output).fetch("items")
+  resources.select do |item|
+    annotations = item.dig("metadata", "annotations") || {}
+    tracking_id = annotations["argocd.argoproj.io/tracking-id"]
+
+    tracking_id&.start_with?("#{application}:") || # ArgoCD v3
+      item.dig("metadata", "labels", "argocd.argoproj.io/instance") == application # ArgoCD v2
+  end
+end
+
 def read_kubectl(command, plugin: nil)
   require_plugin!(plugin) if plugin
   `kubectl #{plugin} --context #{KUBECTL_CONTEXT} #{command.strip}` # strip to allow leading newline
@@ -302,9 +314,8 @@ module ClickHouse
 
     if cluster.empty?
       # Fall back looking for ClickHouse clusters in an application with the same name
-      clusters = read_kubectl("get clickhouseinstallations -l argocd.argoproj.io/instance=#{cluster_or_application} -o name")
-        .lines
-        .map { |c| c.split("/").last.chomp }
+      resources = resources_for_argocd_application("clickhouseinstallations", cluster_or_application)
+      clusters = resources.map { |r| r.dig("metadata", "name") }
 
       abort "Error: couldn't find a ClickHouse cluster named '#{cluster_or_application}'" if clusters.empty?
 
@@ -675,8 +686,7 @@ def logs
   kail_executable = ENV["KAIL_PATH"] || "kail"
   abort "Please install kail (brew install kail) for logs support" unless system("which #{kail_executable} > /dev/null")
 
-  deployments_json = read_kubectl "get deployments -o yaml -l argocd.argoproj.io/instance=#{application}"
-  deployments = YAML.load(deployments_json).fetch("items")
+  deployments = resources_for_argocd_application("deployments", application)
   abort "Couldn't find any deployments for the application #{application}" if deployments.empty?
 
   deployment_names = deployments.map { |deployment| deployment.fetch("metadata").fetch("name") }
@@ -695,8 +705,7 @@ def logs_search
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k logs:search <application> [<type1>, <type2>...]" unless application
 
-  deployments_json = read_kubectl "get deployments -o yaml -l argocd.argoproj.io/instance=#{application}"
-  deployments = YAML.load(deployments_json).fetch("items")
+  deployments = resources_for_argocd_application("deployments", application)
   abort "Couldn't find any deployments for the application #{application}" if deployments.empty?
 
   deployment_names = deployments.map { |deployment| deployment.fetch("metadata").fetch("name") }
@@ -731,10 +740,9 @@ module Pg
     cluster = read_kubectl("get cluster.postgresql.cnpg.io #{cluster_or_application} -o name --ignore-not-found").chomp
 
     if cluster.empty?
-      # Fall back looking for ClickHouse clusters in an application with the same name
-      clusters = read_kubectl("get cluster.postgresql.cnpg.io -l argocd.argoproj.io/instance=#{cluster_or_application} -o name")
-        .lines
-        .map { |c| c.split("/").last.chomp }
+      # Fall back looking for Postgres clusters in an application with the same name
+      resources = resources_for_argocd_application("cluster.postgresql.cnpg.io", cluster_or_application)
+      clusters = resources.map { |r| r.dig("metadata", "name") }
 
       abort "Error: couldn't find a Postgres cluster named '#{cluster_or_application}'" if clusters.empty?
 
@@ -1142,11 +1150,9 @@ def run
   abort "Must pass name of application, eg. k run <application> <command> [--disable-timeout]" unless application
   abort "Must pass command to run, eg. k run <application> <command> [--disable-timeout]" if ARGV.empty?
 
-  deployments_json = read_kubectl "get deployments -o yaml -l argocd.argoproj.io/instance=#{application}"
-  resources = YAML.load(deployments_json).fetch("items")
+  resources = resources_for_argocd_application("deployments", application)
   if resources.empty?
-    cronjobs_json = read_kubectl "get cronjobs -o yaml -l argocd.argoproj.io/instance=#{application}"
-    resources = YAML.load(cronjobs_json).fetch("items")
+    resources = resources_for_argocd_application("cronjobs", application)
     abort "Couldn't find any deployments or cronjobs for the application #{application}" if resources.empty?
   end
 
@@ -1489,18 +1495,12 @@ EOF)
     # NOTE: This assumes that the application is using deployments or cron_jobs to run the image
     # If some other resource type is used, this will time out.
     1.upto(120) do |second|
-      deployments = read_kubectl %(
-        get deployments \
-        -l argocd.argoproj.io/instance=#{application} \
-        -o=jsonpath="{.items[*].spec.template.spec.containers[*].image}"
-      )
+      deployment_resources = resources_for_argocd_application("deployments", application)
+      deployments = deployment_resources.map { |r| r.dig("spec", "template", "spec", "containers").map { |c| c["image"] } }.flatten.join(" ")
       break if deployments.include?(new_image)
 
-      cron_jobs = read_kubectl %(
-        get cronjobs \
-        -l argocd.argoproj.io/instance=#{application} \
-        -o=jsonpath="{.items[*].spec.jobTemplate.spec.template.spec.containers[*].image}"
-      )
+      cronjob_resources = resources_for_argocd_application("cronjobs", application)
+      cron_jobs = cronjob_resources.map { |r| r.dig("spec", "jobTemplate", "spec", "template", "spec", "containers").map { |c| c["image"] } }.flatten.join(" ")
       break if cron_jobs.include?(new_image)
 
       abort "Error: Timed out waiting for new image deployment" if second == 120
