@@ -2828,11 +2828,15 @@ end
 
 def verify_inside_context_repository!
   context_repo = URI K_CONTEXT.fetch("repository").delete_suffix(".git").delete_suffix("/")
-  current_repo = URI `git remote get-url origin`.strip.delete_suffix(".git").delete_suffix("/")
+  current_repo = URI normalize_git_url(`git remote get-url origin`.strip.delete_suffix(".git").delete_suffix("/"))
 
   unless context_repo.path == current_repo.path
     abort "Error: this command must be run from a clone of the context repository (#{context_repo})"
   end
+end
+
+def normalize_git_url(url)
+  url.sub(/\A(?:ssh:\/\/)?git@([^:\/]+)[:\/](.+?)(?:\.git)?\z/i, 'https://\1/\2')
 end
 
 def system_or_die(command)
