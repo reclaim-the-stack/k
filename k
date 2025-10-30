@@ -2071,6 +2071,7 @@ def playground
     else
       ARGV.delete_at(0)
     end
+
   abort "Error: node '#{node_hostname}' not found" unless kubectl("get node #{node_hostname} &> /dev/null")
 
   require "securerandom"
@@ -2078,7 +2079,7 @@ def playground
   puts "Enabling privileged mode, use with caution!" if godmode
   puts "Enabling host network mode." if host_network
 
-  image = "reclaimthestack/playground:sha-6048e00b17198cc058286e5b71dd32de807c12bd"
+  image = "reclaimthestack/playground:sha-b595b7a2a6cfbdef99c458332e5a15270b762597"
   name = "playground-#{SecureRandom.hex(3)}"
 
   god_mounts =
@@ -2104,6 +2105,7 @@ def playground
       )
     end
 
+  max_age_seconds = 60 * 60 * 24 * 3 # kill the pod after 3 days to avoid orphaned pods
   kubectl_command = %(
     kubectl --context #{KUBECTL_CONTEXT} run #{name} -it --restart=Never --rm --image #{image} \
     --overrides='
@@ -2112,6 +2114,7 @@ def playground
         "spec": {
           "nodeSelector": { "kubernetes.io/hostname": "#{node_hostname}" },
           "tolerations": [{ "operator": "Exists" }],
+          "activeDeadlineSeconds": #{max_age_seconds},
           "containers": [{
             "name": "#{name}",
             "image": "#{image}",
