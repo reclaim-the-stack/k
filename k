@@ -1994,6 +1994,11 @@ def secrets_create
     new_env = YAML.load_file(tmp_file)
     File.delete(tmp_file)
 
+    # Can happen if the user eg. deletes everything in the editor
+    unless new_env.is_a?(Hash) && !new_env.empty?
+      abort "Error: No environment variables found, aborting secret creation."
+    end
+
     data = new_env.transform_values(&:to_s).transform_values(&Base64.method(:strict_encode64))
 
     secret_yaml = {
