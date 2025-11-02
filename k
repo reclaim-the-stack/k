@@ -33,7 +33,7 @@ K_CONFIG = YAML.load_file(K_CONFIG_FILE)
 
 if (K_CONTEXT = K_CONFIG["contexts"][K_CONFIG["context"]])
   ORGANIZATION = K_CONTEXT.fetch("github_organization").freeze
-  GIT_HOST = URI(K_CONTEXT.fetch("repository")).host.freeze
+  GIT_HOST = K_CONTEXT.fetch("repository")[/[a-zA-Z]+.com/].freeze
   REPO_NAME = K_CONFIG["context"].freeze
   INTERNAL_REPO_PATH = "#{ENV.fetch('HOME')}/.k/#{REPO_NAME}".freeze
   REGISTRY = "#{K_CONTEXT.fetch('registry')}/#{K_CONTEXT.fetch('registry_namespace')}".freeze
@@ -447,7 +447,7 @@ def contexts_add
     puts ""
     puts bold "Description"
     puts "Adds a k context. A context is a combination of:"
-    puts "1. A GitHub/GitLab repository containing ArgoCD platform and applications manifests"
+    puts "1. A GitHub/GitLab/Gitea repository containing ArgoCD platform and applications manifests"
     puts "2. A Docker registry + namespace containing Docker images to be deployed as applications"
     puts "3. A Kubernetes cluster (ie. a locally configured kubectl context)"
     exit
@@ -455,8 +455,7 @@ def contexts_add
 
   require "fileutils"
 
-  uri = URI(repository_url)
-  abort "Error: URL must be a GitHub/GitLab repository" unless ['github.com', 'gitlab.com'].include?(uri.host)
+  abort "Error: URL must be a GitHub/GitLab/Gitea repository" unless repository_url.match(/git(hub|lab|ea).com/)
 
   puts ""
   puts "Verifying access to #{repository_url}..."
@@ -486,8 +485,9 @@ def contexts_add
   puts "Write access verified ✅"
   puts ""
 
-  github_organization, repository_name = uri.path.delete_prefix("/").split("/")
-  repository_name = repository_name.delete_suffix(".git")
+  # Could be either a HTTP or SSH URL. Eg.
+  # https://github.com/myorg/myrepo.git or git@github.com:myorg/myrepo.git
+  github_organization, repository_name = repository_url.delete_suffix(".git").split(%r{:|/}).last(2)
 
   default_context_name = repository_name
   print "What would you like to name this context? [#{default_context_name}] "
@@ -2838,10 +2838,12 @@ def namespace_prefix(namespace)
 end
 
 def verify_inside_context_repository!
-  context_repo = URI K_CONTEXT.fetch("repository").delete_suffix(".git").delete_suffix("/")
-  current_repo = URI `git remote get-url origin`.strip.delete_suffix(".git").delete_suffix("/")
+  # Repos could be either a HTTP or SSH URL. Eg.
+  # https://github.com/myorg/myrepo.git or git@github.com:myorg/myrepo.git
+  context_repo = K_CONTEXT.fetch("repository").delete_suffix(".git").split(%r{:|/}).last(2)
+  current_repo = `git remote get-url origin`.strip.delete_suffix(".git").split(%r{:|/}).last(2)
 
-  unless context_repo.path == current_repo.path
+  unless context_repo == current_repo
     abort "Error: this command must be run from a clone of the context repository (#{context_repo})"
   end
 end
