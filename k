@@ -1779,6 +1779,9 @@ def secrets_edit
   in_argo_repo do
     require "base64"
 
+    shared_secret_path = "applications/shared-secrets/#{namespace_prefix(namespace)}#{shared_secret}.yaml"
+    abort "Error: no shared secret named '#{shared_secret}' found in repo" unless File.exist?(shared_secret_path)
+
     original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} --namespace #{namespace} -o yaml")
     original_env = original_secret.fetch("data").transform_values(&Base64.method(:strict_decode64))
 
@@ -1799,7 +1802,7 @@ def secrets_edit
     original_secret["data"] = data
 
     File.write(tmp_file, original_secret.to_yaml)
-    kubeseal tmp_file, "applications/shared-secrets/#{namespace_prefix(namespace)}#{shared_secret}.yaml"
+    kubeseal tmp_file, shared_secret_path
     File.delete tmp_file
 
     changed_variables = new_env.keys.select do |name|
