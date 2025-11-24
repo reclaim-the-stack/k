@@ -184,6 +184,8 @@ def print_commands
   puts "k node:failover <node-name>" + gray(" failover all databases on a node in a kubernetes cluster")
   puts "k node:purge-pvcs <node-name> [specific-pvc]" + gray(" delete all PVCs on a node in a kubernetes cluster")
   puts "k node:pvcs [<node-name>]" + gray(" list PVCs in a kubernetes cluster")
+  puts "k opensearch:url <cluster-name>" + gray(" output the internal URL for an opensearch cluster")
+  puts "k opensearch:dashboards <cluster-name>" + gray(" access opensearch dashboards for a cluster")
   puts "k pg" + gray(" list postgres related commands")
   puts "k redis" + gray(" list redis related commands")
   puts "k releases <application>" + gray(" lists the past 15 releases for an application")
@@ -615,7 +617,7 @@ def kibana
   end
 
   5601.upto(5700) do |port|
-    # If we can connect to the port another kibana is already active and we skip to the next port
+    # If we can connect to the port it is used by another process so we skip to the next port
     next if TCPSocket.new("127.0.0.1", port).close.nil? rescue false # rubocop:disable Style/RescueModifier
 
     puts "Making kibana accessible at: http://#{hostname}:#{port}/app/monitoring#/overview"
@@ -2653,6 +2655,59 @@ def node_purge_pvcs
     puts pvcs_on_node.map { |pvc| "#{pvc.dig("metadata", "namespace")}/#{pvc.dig("metadata", "name")}" }
   end
 end
+
+def opensearch_url
+  opensearch_cluster = ARGV.delete_at(0)
+  abort "Must pass name of opensearch cluster, eg. k opensearch:url <cluster-name>" unless opensearch_cluster
+
+  require "base64"
+
+  secret = read_kubectl("get secret opensearch-#{opensearch_cluster}-credentials -o yaml")
+  abort "ERROR: No credentials secret found for opensearch cluster '#{opensearch_cluster}'" if secret.empty?
+
+  encoded_url = YAML.load(secret).fetch("data").fetch("admin_uri")
+  url = Base64.strict_decode64(encoded_url)
+
+  puts url
+end
+
+def opensearch_dashboards
+  opensearch_cluster = ARGV.delete_at(0)
+  abort "Must pass name of opensearch cluster, eg. k opensearch:dashboard <cluster-name>" unless opensearch_cluster
+
+  require "socket"
+  if ENV["K_LISTEN_ON_ALL_INTERFACES"] == "true"
+    kubectl_address_flag = " --address 0.0.0.0"
+    hostname = Socket.gethostname
+  else
+    kubectl_address_flag = ""
+    hostname = "localhost"
+  end
+
+  require "base64"
+  base64_password = read_kubectl "get secret opensearch-#{opensearch_cluster}-credentials --template={{.data.kibanaserver_password}}"
+  abort "ERROR: No credentials secret found for opensearch cluster '#{opensearch_cluster}'" if base64_password.empty?
+
+  password = Base64.decode64(base64_password)
+
+  5601.upto(5700) do |port|
+    # If we can connect to the port another kibana is already active and we skip to the next port
+    next if TCPSocket.new("127.0.0.1", port).close.nil? rescue false # rubocop:disable Style/RescueModifier
+
+    puts "Making dashboards accessible at: http://#{hostname}:#{port}/"
+    if system "which pbcopy > /dev/null 2>&1"
+      puts "Storing dashboards password in clipboard..."
+      puts
+      IO.popen("pbcopy", "w") { |clipboard| clipboard.write(password) }
+      puts "Login with username 'kibanaserver' and paste the password from your clipboard"
+    else
+      puts "Login with username 'kibanaserver' and paste the password '#{password}'"
+    end
+    puts
+    kubectl "port-forward service/opensearch-dashboards-#{opensearch_cluster} #{port}:5601#{kubectl_address_flag}"
+  end
+end
+alias opensearch_dashboard opensearch_dashboards
 
 def restart
   application = ARGV.delete_at(0)
