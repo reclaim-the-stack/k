@@ -2685,7 +2685,7 @@ def opensearch_dashboards
   end
 
   require "base64"
-  base64_password = read_kubectl "get secret opensearch-#{opensearch_cluster}-credentials --template={{.data.kibanaserver_password}}"
+  base64_password = read_kubectl "get secret opensearch-#{opensearch_cluster}-credentials --template={{.data.admin_password}}"
   abort "ERROR: No credentials secret found for opensearch cluster '#{opensearch_cluster}'" if base64_password.empty?
 
   password = Base64.decode64(base64_password)
@@ -2699,9 +2699,9 @@ def opensearch_dashboards
       puts "Storing dashboards password in clipboard..."
       puts
       IO.popen("pbcopy", "w") { |clipboard| clipboard.write(password) }
-      puts "Login with username 'kibanaserver' and paste the password from your clipboard"
+      puts "Login with username 'admin' and paste the password from your clipboard"
     else
-      puts "Login with username 'kibanaserver' and paste the password '#{password}'"
+      puts "Login with username 'admin' and paste the password '#{password}'"
     end
     puts
     kubectl "port-forward service/opensearch-dashboards-#{opensearch_cluster} #{port}:5601#{kubectl_address_flag}"
