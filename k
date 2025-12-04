@@ -61,6 +61,10 @@ def yellow(string)
   $stdout.tty? ? "\033[33m#{string}\e[0m" : string
 end
 
+def red(string)
+  $stdout.tty? ? "\e[31m#{string}\e[0m" : string
+end
+
 def blue(string)
   $stdout.tty? ? "\033[34m#{string}\e[0m" : string
 end
@@ -184,6 +188,7 @@ def print_commands
   puts "k node:failover <node-name>" + gray(" failover all databases on a node in a kubernetes cluster")
   puts "k node:purge-pvcs <node-name> [specific-pvc]" + gray(" delete all PVCs on a node in a kubernetes cluster")
   puts "k node:pvcs [<node-name>]" + gray(" list PVCs in a kubernetes cluster")
+  puts "k opensearch:overview <cluster-name>" + gray(" show OpenSearch health, size and JVM usage")
   puts "k opensearch:url <cluster-name>" + gray(" output the internal URL for an opensearch cluster")
   puts "k opensearch:dashboards <cluster-name>" + gray(" access opensearch dashboards for a cluster")
   puts "k pg" + gray(" list postgres related commands")
@@ -2708,6 +2713,89 @@ def opensearch_dashboards
   end
 end
 alias opensearch_dashboard opensearch_dashboards
+
+def opensearch_overview
+  opensearch_cluster = ARGV.delete_at(0)
+  abort "Must pass name of opensearch cluster, eg. k opensearch:overview <cluster-name>" unless opensearch_cluster
+
+  require "base64"
+
+  secret = read_kubectl("get secret opensearch-#{opensearch_cluster}-credentials -o yaml")
+  abort "ERROR: No credentials secret found for opensearch cluster '#{opensearch_cluster}'" if secret.empty?
+
+  encoded_url = YAML.load(secret).fetch("data").fetch("admin_uri")
+  base_url = Base64.strict_decode64(encoded_url)
+
+  require "json"
+
+  cluster_stats_response = read_kubectl("exec opensearch-#{opensearch_cluster}-0 -- curl --silent #{base_url}/_cluster/stats")
+  cluster_stats = begin
+    JSON.parse(cluster_stats_response)
+  rescue JSON::ParserError
+    abort "Error: failed to parse OpenSearch cluster stats response: #{cluster_stats_response}"
+  end
+
+  version_label = cluster_stats.dig("nodes", "versions").join(", ")
+
+  status_badge =
+    case cluster_stats["status"]
+    when "green" then green("Green")
+    when "yellow" then yellow("Yellow")
+    when "red" then red("Red")
+    else
+      cluster_health["status"] ? cluster_health["status"].to_s.capitalize : "Unknown"
+    end
+
+  format_number = lambda do |value|
+    return "—" unless value
+
+    value.to_i.to_s.gsub(/(\d)(?=(\d{3})+(?!\d))/, "\\1,")
+  end
+
+  format_bytes = lambda do |bytes|
+    return "—" unless bytes
+
+    size = bytes.to_f
+    units = %w[B KB MB GB TB PB]
+    unit = units.shift
+
+    while size >= 1024 && !units.empty?
+      size /= 1024.0
+      unit = units.shift
+    end
+
+    format("%0.1f %s", size, unit)
+  end
+
+  heap_used = cluster_stats.dig("nodes", "jvm", "mem", "heap_used_in_bytes")
+  heap_max = cluster_stats.dig("nodes", "jvm", "mem", "heap_max_in_bytes")
+
+  heap_percent = ((heap_used.to_f / heap_max.to_f) * 100).round
+  heap_summary = "#{format_bytes.call(heap_used)} used / #{format_bytes.call(heap_max)} total (#{heap_percent}%)"
+
+  content_width = 72
+  border = "+#{'-' * (content_width + 2)}+"
+
+  pad_line = lambda do |content = ""|
+    visible_length = content.to_s.gsub(/\e\[[\d;]*m/, "").length
+    padding = [content_width - visible_length, 0].max
+
+    puts "| #{content}#{' ' * padding} |"
+  end
+
+  puts
+  puts "#{bold('OpenSearch Overview')}: #{bold(opensearch_cluster)}"
+  puts border
+  pad_line.call("#{gray('Version:')} #{version_label}")
+  pad_line.call("#{gray('State:')} #{status_badge}")
+  pad_line.call("#{gray('Nodes:')} #{format_number.call(cluster_stats.dig("_nodes", "total"))}")
+  pad_line.call("#{gray('Indices:')} #{format_number.call(cluster_stats.dig('indices', 'count'))}")
+  pad_line.call("#{gray('Documents:')} #{format_number.call(cluster_stats.dig('indices', 'docs', 'count'))}")
+  pad_line.call("#{gray('Primary shards:')} #{format_number.call(cluster_stats.dig('indices', 'shards', 'primaries'))}")
+  pad_line.call("#{gray('Data on disk:')} #{format_bytes.call(cluster_stats.dig('indices', 'store', 'size_in_bytes'))}")
+  pad_line.call("#{gray('JVM heap:')} #{heap_summary}")
+  puts border
+end
 
 def restart
   application = ARGV.delete_at(0)
