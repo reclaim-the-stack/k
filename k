@@ -106,7 +106,7 @@ end
 
 def resources_for_argocd_application(kind, application)
   yaml_output = read_kubectl("get #{kind} -o yaml")
-  resources = YAML.load(yaml_output).fetch("items")
+  resources = YAML.load(yaml_output, permitted_classes: [Time]).fetch("items")
   resources.select do |item|
     annotations = item.dig("metadata", "annotations") || {}
     tracking_id = annotations["argocd.argoproj.io/tracking-id"]
@@ -785,7 +785,7 @@ module Pg
     cluster = read_kubectl("get cluster #{cluster_name} -o yaml")
     abort "Error: cluster '#{cluster_name}' not found" if cluster.empty?
 
-    cluster = YAML.load(cluster)
+    cluster = YAML.load(cluster, permitted_classes: [Time])
     user ||= cluster_name
 
     app_secret = read_kubectl("get secret #{cluster_name}-app -o yaml")
