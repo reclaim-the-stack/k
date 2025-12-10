@@ -12,6 +12,11 @@ require "yaml"
 require "tmpdir"
 require "uri"
 
+# Older versions of YAML (ie. in Ruby 2.5) don't have unsafe_load
+def yaml_load(string)
+  YAML.respond_to?(:unsafe_load) ? YAML.unsafe_load(string) : YAML.load(string)
+end
+
 # rubocop:disable Style/StringConcatenation
 
 K_CONFIG_FILE = "#{ENV.fetch('HOME')}/.k/config".freeze
@@ -106,7 +111,7 @@ end
 
 def resources_for_argocd_application(kind, application)
   yaml_output = read_kubectl("get #{kind} -o yaml")
-  resources = YAML.load(yaml_output, permitted_classes: [Time]).fetch("items")
+  resources = yaml_load(yaml_output).fetch("items")
   resources.select do |item|
     annotations = item.dig("metadata", "annotations") || {}
     tracking_id = annotations["argocd.argoproj.io/tracking-id"]
@@ -785,17 +790,17 @@ module Pg
     cluster = read_kubectl("get cluster #{cluster_name} -o yaml")
     abort "Error: cluster '#{cluster_name}' not found" if cluster.empty?
 
-    cluster = YAML.load(cluster, permitted_classes: [Time])
+    cluster = yaml_load(cluster)
     user ||= cluster_name
 
     app_secret = read_kubectl("get secret #{cluster_name}-app -o yaml")
     abort "ERROR: Could not find authentication secret for '#{cluster_name}'" if app_secret.empty?
-    app_secret = YAML.load(app_secret).fetch("data")
+    app_secret = yaml_load(app_secret).fetch("data")
 
     if user == "superuser"
       superuser_secret = read_kubectl("get secret #{cluster_name}-superuser -o yaml")
       abort "ERROR: Could not find superuser secret for '#{cluster_name}'" if superuser_secret.empty?
-      superuser_secret = YAML.load(superuser_secret).fetch("data")
+      superuser_secret = yaml_load(superuser_secret).fetch("data")
 
       # Superuser secrets use * as dbname since they can theoretically connect to any database,
       # however this doesn't provide valid URL's to successfully connect via psql.
@@ -878,7 +883,7 @@ def pg_failover
   #   }
   #   ...
   # }
-  status = YAML.load(status_yaml)
+  status = yaml_load(status_yaml)
   instance_state = status.dig("cluster", "status", "instancesReportedState")
   non_primary_instance = instance_state.find { |_, state| !state["isPrimary"] }
   abort "No non-primary instance found for cluster '#{cluster}'" unless non_primary_instance
@@ -1532,7 +1537,7 @@ def elasticsearch_url
   require "base64"
 
   secret = read_kubectl("get secret #{elasticsearch_cluster}-es-elastic-user -o yaml")
-  password = YAML.load(secret).fetch("data").fetch("elastic")
+  password = yaml_load(secret).fetch("data").fetch("elastic")
   decoded_password = Base64.strict_decode64(password)
 
   puts "http://elastic:#{decoded_password}@#{elasticsearch_cluster}-es-http:9200"
@@ -2331,8 +2336,8 @@ def generate_deployment
     .match(/# Example values\.yaml:\n([\s\S]*?)\n\n/)[1]
     .gsub(/^# /, "")
   values_string = File.read(values_path)
-  template_values = YAML.load(template_values_string)
-  values = YAML.load(values_string)
+  template_values = yaml_load(template_values_string)
+  values = yaml_load(values_string)
 
   # Handle image:
   if template_values.key?("image") && !values.key?("image")
@@ -2456,8 +2461,8 @@ def generate_resource
     .match(/# Example values\.yaml:\n([\s\S]*?)\n\n/)[1]
     .gsub(/^# /, "")
   values_string = File.read(values_path)
-  template_values = YAML.load(template_values_string)
-  values = YAML.load(values_string)
+  template_values = yaml_load(template_values_string)
+  values = yaml_load(values_string)
 
   # NOTE: We assume that 'resources', 'envFrom' and 'env' nodes exists in all
   # application values.yaml files since "generate application" would create them.
@@ -2493,7 +2498,7 @@ def generate_resource
 end
 
 def node_pvcs
-  all_pvcs = YAML.load read_kubectl("get pvc --all-namespaces -o yaml")
+  all_pvcs = yaml_load read_kubectl("get pvc --all-namespaces -o yaml")
 
   pvcs_per_node = all_pvcs.fetch("items").each_with_object({}) do |pvc, hash|
     node = pvc.dig("metadata", "annotations", "volume.kubernetes.io/selected-node")
@@ -2528,7 +2533,7 @@ def node_failover
   node_exists = kubectl?("get node #{node_name}")
   abort "Error: node '#{node_name}' not found" unless node_exists
 
-  pods_on_node = YAML.unsafe_load(read_kubectl("get pods --field-selector spec.nodeName=#{node_name} -o yaml")).fetch("items")
+  pods_on_node = yaml_load(read_kubectl("get pods --field-selector spec.nodeName=#{node_name} -o yaml")).fetch("items")
 
   primaries = pods_on_node.select do |pod|
     labels = pod.fetch("metadata")["labels"]
@@ -2585,7 +2590,7 @@ def node_purge_pvcs
   node_name = ARGV.delete_at(0)
   abort "Must pass name of node, eg. k node:purge-pvcs <node-name> [specific-pvc]" unless node_name
 
-  all_pvcs = YAML.load read_kubectl("get pvc --all-namespaces -o yaml")
+  all_pvcs = yaml_load read_kubectl("get pvc --all-namespaces -o yaml")
 
   pvcs_on_node = all_pvcs.fetch("items").select do |pvc|
     pvc.dig("metadata", "annotations", "volume.kubernetes.io/selected-node") == node_name
@@ -2642,7 +2647,7 @@ def node_purge_pvcs
 
   5.times do
     sleep 0.5
-    all_pvcs = YAML.load read_kubectl("get pvc --all-namespaces -o yaml")
+    all_pvcs = yaml_load read_kubectl("get pvc --all-namespaces -o yaml")
 
     pvcs_on_node = all_pvcs.fetch("items").select do |pvc|
       pvc.dig("metadata", "annotations", "volume.kubernetes.io/selected-node") == node_name
@@ -2670,7 +2675,7 @@ def opensearch_url
   secret = read_kubectl("get secret opensearch-#{opensearch_cluster}-credentials -o yaml")
   abort "ERROR: No credentials secret found for opensearch cluster '#{opensearch_cluster}'" if secret.empty?
 
-  encoded_url = YAML.load(secret).fetch("data").fetch("admin_uri")
+  encoded_url = yaml_load(secret).fetch("data").fetch("admin_uri")
   url = Base64.strict_decode64(encoded_url)
 
   puts url
@@ -2723,7 +2728,7 @@ def opensearch_overview
   secret = read_kubectl("get secret opensearch-#{opensearch_cluster}-credentials -o yaml")
   abort "ERROR: No credentials secret found for opensearch cluster '#{opensearch_cluster}'" if secret.empty?
 
-  encoded_url = YAML.load(secret).fetch("data").fetch("admin_uri")
+  encoded_url = yaml_load(secret).fetch("data").fetch("admin_uri")
   base_url = Base64.strict_decode64(encoded_url)
 
   require "json"
