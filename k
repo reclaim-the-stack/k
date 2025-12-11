@@ -1162,13 +1162,24 @@ def pg_unused_indexes
   SQL
 end
 
-# TODO: should have a configurable timeout (sleep duration) for long running commands
 def run
   application = ARGV.delete_at(0)
   disable_timeout = ARGV.delete("--disable-timeout")
 
-  abort "Must pass name of application, eg. k run <application> <command> [--disable-timeout]" unless application
-  abort "Must pass command to run, eg. k run <application> <command> [--disable-timeout]" if ARGV.empty?
+  # Handle --tag=<tag> argument, can be passed as --tag=<tag> or --tag <tag> and must be before the command
+  if ARGV[0]&.start_with?("--tag=")
+    tag = ARGV.delete_at(0).split("=", 2).last
+    abort "ERROR: Must provide a tag value with --tag=" if tag.empty?
+  elsif ARGV[0] == "--tag"
+    ARGV.delete_at(0)
+    tag = ARGV.delete_at(0)
+    abort "ERROR: Must provide a tag value with --tag" if tag.nil? || tag.empty?
+  elsif ARGV.any? { |arg| arg == "--tag" || arg.start_with?("--tag=") }
+    puts yellow('Warning: ') + gray("--tag argument will be part of the running command, if you intended to set the image tag you must pass it before the command")
+  end
+
+  abort "Must pass name of application, eg. k run <application> [--tag=<tag>] <command> [--disable-timeout] " unless application
+  abort "Must pass command to run, eg. k run <application> [--tag=<tag>] <command> [--disable-timeout]" if ARGV.empty?
 
   resources = resources_for_argocd_application("deployments", application)
   if resources.empty?
@@ -1198,6 +1209,13 @@ def run
   require "json" # for to_json
 
   pod_name = "#{application}-run-#{SecureRandom.hex(3)}"
+  image = run_container.fetch("image")
+
+  # replace image tag if --tag was provided
+  if tag
+    image = "#{image.split(':').first}:#{tag}"
+    puts gray("applying --tag argument to image: #{image}")
+  end
 
   pod_template = {
     apiVersion: "v1",
@@ -1211,7 +1229,7 @@ def run
       containers: other_containers + [
         {
           name: "run",
-          image: run_container.fetch("image"),
+          image: image,
           envFrom: run_container["envFrom"] || [],
           env: run_container["env"] || [],
           imagePullPolicy: "IfNotPresent",
