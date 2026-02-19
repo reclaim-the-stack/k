@@ -1162,24 +1162,41 @@ def pg_unused_indexes
   SQL
 end
 
-def run
-  application = ARGV.delete_at(0)
-  disable_timeout = ARGV.delete("--disable-timeout")
+# Parse named options from ARGV, modifying it in place. Remaining positional args stay in ARGV.
+#
+# flags:  boolean switches that can appear anywhere (eg. --disable-timeout)
+# params: options that take a value and must appear before positional args
+#         accepts --key=value or --key value syntax
+#
+# Returns a Hash keyed by the option name without leading dashes, eg. { "tag" => "v1", "disable-timeout" => true }
+def parse_options!(flags: [], params: [])
+  options = {}
 
-  # Handle --tag=<tag> argument, can be passed as --tag=<tag> or --tag <tag> and must be before the command
-  if ARGV[0]&.start_with?("--tag=")
-    tag = ARGV.delete_at(0).split("=", 2).last
-    abort "ERROR: Must provide a tag value with --tag=" if tag.empty?
-  elsif ARGV[0] == "--tag"
-    ARGV.delete_at(0)
-    tag = ARGV.delete_at(0)
-    abort "ERROR: Must provide a tag value with --tag" if tag.nil? || tag.empty?
-  elsif ARGV.any? { |arg| arg == "--tag" || arg.start_with?("--tag=") }
-    puts yellow('Warning: ') + gray("--tag argument will be part of the running command, if you intended to set the image tag you must pass it before the command")
+  flags.each { |flag| options[flag.delete_prefix("--")] = !!ARGV.delete(flag) }
+
+  params.each do |param|
+    key = param.delete_prefix("--")
+    if ARGV[0]&.start_with?("#{param}=")
+      options[key] = ARGV.delete_at(0).split("=", 2).last
+      abort "ERROR: Must provide a value with #{param}=" if options[key].empty?
+    elsif ARGV[0] == param
+      ARGV.delete_at(0)
+      options[key] = ARGV.delete_at(0)
+      abort "ERROR: Must provide a value with #{param}" if options[key].nil? || options[key].empty?
+    elsif ARGV.any? { |arg| arg == param || arg.start_with?("#{param}=") }
+      puts yellow('Warning: ') + gray("#{param} argument will be part of the running command, if you intended to use it you must pass it before the command")
+    end
   end
 
-  abort "Must pass name of application, eg. k run <application> [--tag=<tag>] <command> [--disable-timeout] " unless application
-  abort "Must pass command to run, eg. k run <application> [--tag=<tag>] <command> [--disable-timeout]" if ARGV.empty?
+  options
+end
+
+def run
+  application = ARGV.delete_at(0)
+  options = parse_options!(flags: %w[--disable-timeout], params: %w[--tag --node])
+
+  abort "Must pass name of application, eg. k run <application> [--tag=<tag>] [--node=<node>] <command> [--disable-timeout] " unless application
+  abort "Must pass command to run, eg. k run <application> [--tag=<tag>] [--node=<node>] <command> [--disable-timeout]" if ARGV.empty?
 
   resources = resources_for_argocd_application("deployments", application)
   if resources.empty?
@@ -1212,10 +1229,12 @@ def run
   image = run_container.fetch("image")
 
   # replace image tag if --tag was provided
-  if tag
-    image = "#{image.split(':').first}:#{tag}"
+  if options["tag"]
+    image = "#{image.split(':').first}:#{options['tag']}"
     puts gray("applying --tag argument to image: #{image}")
   end
+
+
 
   pod_template = {
     apiVersion: "v1",
@@ -1233,11 +1252,16 @@ def run
           envFrom: run_container["envFrom"] || [],
           env: run_container["env"] || [],
           imagePullPolicy: "IfNotPresent",
-          command: ["sleep", disable_timeout ? "86400" : "3600"], # shutdown the pod after 1 hour or 24 hours
+          command: ["sleep", options["disable-timeout"] ? "86400" : "3600"], # shutdown the pod after 1 hour or 24 hours
         },
       ],
     },
   }
+
+  if options["node"]
+    puts gray("applying nodeName: #{options["node"]} to pod template spec")
+    pod_template[:spec][:nodeName] = options["node"]
+  end
 
   puts "Creating pod #{pod_name}..."
   system("echo '#{pod_template.to_json}' | kubectl --context #{KUBECTL_CONTEXT} apply -f -") || abort("failed to create pod")
