@@ -2,6 +2,7 @@
 
 # ENV variables of note:
 # HOME - the user's home directory, we'll use this to store configuration and manage gitop repos under ~/.k
+# K_CONTEXT - override the active context for this invocation, eg. K_CONTEXT=staging k config my-app
 # KAIL_PATH - path to kail executable, defaults to "kail"
 # KUBESEAL_PATH - path to kubeseal executable, defaults to "kubeseal"
 # YQ_PATH - path to yq executable, defaults to "yq"
@@ -36,16 +37,22 @@ end
 
 K_CONFIG = YAML.load_file(K_CONFIG_FILE)
 
-if (K_CONTEXT = K_CONFIG["contexts"][K_CONFIG["context"]])
+K_CONTEXT_NAME = (ENV["K_CONTEXT"] || K_CONFIG["context"]).freeze
+
+if (K_CONTEXT = K_CONFIG["contexts"][K_CONTEXT_NAME])
   ORGANIZATION = K_CONTEXT.fetch("github_organization").freeze
   GIT_HOST = K_CONTEXT.fetch("repository")[/[a-zA-Z]+.com/].freeze
-  REPO_NAME = K_CONFIG["context"].freeze
+  REPO_NAME = K_CONTEXT_NAME
   INTERNAL_REPO_PATH = "#{ENV.fetch('HOME')}/.k/#{REPO_NAME}".freeze
   REGISTRY = "#{K_CONTEXT.fetch('registry')}/#{K_CONTEXT.fetch('registry_namespace')}".freeze
   KUBECTL_CONTEXT = K_CONTEXT.fetch("kubectl_context").freeze
   abort("Fatal: couldn't locate gitops repository at #{INTERNAL_REPO_PATH}") unless File.directory?(INTERNAL_REPO_PATH)
 elsif ARGV.first.to_s.start_with?("contexts")
   # Do nothing - we're about to add / list or use a context!
+elsif ENV["K_CONTEXT"]
+  puts "Error: the context '#{ENV['K_CONTEXT']}' set via the K_CONTEXT environment variable didn't match any existing contexts"
+  puts "Run `k contexts` to see a list of available contexts"
+  abort
 elsif K_CONFIG["contexts"].empty?
   puts "Warning: no contexts configured. Please run `k contexts:add <github/gitlab-repository>` to configure a context"
 else
@@ -443,7 +450,7 @@ def contexts
   offset_2 = longest_repo.length + 2
 
   puts gray("Name".ljust(offset_1) + "Repository".ljust(offset_2) + "Kubernetes Context")
-  current_context = K_CONFIG.fetch("context")
+  current_context = ENV["K_CONTEXT"] || K_CONFIG.fetch("context")
   K_CONFIG.fetch("contexts").each do |name, data|
     suffix = "  <-" if name == current_context
     repo = data.fetch("repository").split("/").last(2).join("/")
