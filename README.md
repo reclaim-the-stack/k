@@ -27,6 +27,8 @@ The first step when using `k` will be to configure a "context". A context is a c
 
 Run `k contexts:add <github-gitops-url>` to add your first context.
 
+All commands operate on the active context. Switch contexts with `k contexts:use <context>`, or override the context for a single invocation with the `K_CONTEXT` environment variable, eg. `K_CONTEXT=staging k config my-app` — useful in scripts and automation working against multiple clusters concurrently.
+
 Note that `k` stores all its configuration in YAML at `~/.k/config`. Feel free to inspect this file and make changes by hand if you so desire.
 
 ### Usage

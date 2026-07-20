@@ -12,16 +12,16 @@ TEST_REPOSITORY_PATH = "#{HOME}/.k/test"
 RSpec.describe "k" do
   attr_reader :out, :err, :status
 
-  def k(arguments, debug: false)
+  def k(arguments, debug: false, env: {})
     Dir.chdir("#{ENV['HOME']}/.k/test") do
       # With the regular #capture3 approach to testing output and status of k
       # execution we will not be able to see puts statements or initialize a
       # debugger if we want to get a better understanding of what k is doing.
       # Temporarily passing debug: true while figuring something out changes
       # execution to use #system instead which allows for more debugging options.
-      return system("#{PROJECT_ROOT}/k #{arguments}") if debug
+      return system(env, "#{PROJECT_ROOT}/k #{arguments}") if debug
 
-      out, err, status = Open3.capture3("#{PROJECT_ROOT}/k #{arguments}")
+      out, err, status = Open3.capture3(env, "#{PROJECT_ROOT}/k #{arguments}")
       @out = out
       @err = err
       @status = status
@@ -41,6 +41,33 @@ RSpec.describe "k" do
 
     ENV["HOME"] = HOME
     ENV["GIT_TERMINAL_PROMPT"] = "0"
+  end
+
+  describe "K_CONTEXT environment variable" do
+    it "overrides the configured context" do
+      # Break the configured context so only the K_CONTEXT override can succeed
+      config_path = "#{HOME}/.k/config"
+      config = YAML.load_file(config_path)
+      config["context"] = "nonexistent"
+      File.write(config_path, config.to_yaml)
+
+      k "generate application test-app"
+
+      expect(out).to include "didn't match any existing contexts"
+      expect(status).not_to be_success
+
+      k "generate application test-app", env: { "K_CONTEXT" => "test" }
+
+      expect(out).to include "applications/test-app/Chart.yaml"
+      expect(status).to be_success
+    end
+
+    it "aborts with a clear error when K_CONTEXT doesn't match any context" do
+      k "generate application test-app", env: { "K_CONTEXT" => "bogus" }
+
+      expect(out).to include "the context 'bogus' set via the K_CONTEXT environment variable didn't match any existing contexts"
+      expect(status).not_to be_success
+    end
   end
 
   describe "#generate_application" do
