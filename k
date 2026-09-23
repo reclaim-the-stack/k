@@ -3006,7 +3006,14 @@ end
 
 def redis_primaries
   puts bold("Redis Primaries")
-  kubectl "get pods -o wide --selector=redisfailovers-role=master"
+
+  # Reclaim the Stack's template based clusters and Spotahome operator clusters label their primaries differently
+  primaries = %w[redis.reclaim-the-stack.com/role=master redisfailovers-role=master].flat_map do |selector|
+    read_kubectl("get pods --selector=#{selector} -o name").split
+  end
+  abort "No redis primaries found" if primaries.empty?
+
+  kubectl "get #{primaries.join(" ")} -o wide"
 end
 
 def redis_url
