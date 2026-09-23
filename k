@@ -2863,6 +2863,22 @@ def redis
   puts "k redis:url <cluster-name>" + gray(" output the internal URL for a redis cluster")
 end
 
+# Password protected Reclaim the Stack Redis clusters provide the "app" user's password
+# via REDISCLI_AUTH in their containers, clusters without it are accessed without auth.
+def redis_cli_command(pod, container_name)
+  container = pod.dig("spec", "containers").find { |c| c.fetch("name") == container_name }
+  password_protected = (container["env"] || []).any? { |env| env["name"] == "REDISCLI_AUTH" }
+  password_protected ? "redis-cli --user app" : "redis-cli"
+end
+
+# Clusters with an "app" user have a <cluster>-redis-auth secret containing ready to use URLs
+def redis_auth_secret_url(redis_cluster, key)
+  require "base64"
+
+  encoded_url = read_kubectl("get secret #{redis_cluster}-redis-auth --ignore-not-found -o jsonpath='{.data.#{key}}'")
+  Base64.strict_decode64(encoded_url) unless encoded_url.empty?
+end
+
 def redis_cli
   redis_cluster = ARGV.delete_at(0)
   abort "Must pass name of redis-cluster, eg. k redis:cli <cluster-name> [<arguments for redis-cli>]" unless redis_cluster
@@ -2884,22 +2900,27 @@ def redis_cli
       # Rely on Reclaim the Stack's sentinel based approach without operator
       sentinel_pod_yaml = read_kubectl("get pods -l redis.reclaim-the-stack.com/cluster=#{redis_cluster},redis.reclaim-the-stack.com/component=sentinel --field-selector=status.phase=Running -o yaml")
 
-      sentinel_pod = YAML.safe_load(sentinel_pod_yaml).dig("items", 0, "metadata", "name")
+      sentinel_pod = YAML.safe_load(sentinel_pod_yaml).dig("items", 0)
       abort "Error: no sentinel pod found for '#{redis_cluster}'" unless sentinel_pod
 
-      # Get redis master address from Sentinel. Output example:
+      sentinel_pod_name = sentinel_pod.dig("metadata", "name")
+      redis_cli = redis_cli_command(sentinel_pod, "sentinel")
+
+      # Get redis master address from Sentinel. Output example (without the 1) and quotes when not run in a TTY):
       # 1) "manual-redis-redis-foo-0.manual-redis-redis-foo.default.svc.cluster.local"
       # 2) "6379"
-      response = read_kubectl("exec -c sentinel -it #{sentinel_pod} -- redis-cli -p 26379 SENTINEL GET-MASTER-ADDR-BY-NAME #{redis_cluster}")
+      response = read_kubectl("exec -c sentinel -it #{sentinel_pod_name} -- #{redis_cli} -p 26379 SENTINEL GET-MASTER-ADDR-BY-NAME #{redis_cluster}")
       # extract master pod name from address
-      match = response.match(/1\) "([^\.]+)/)
+      match = response.match(/^(?:1\) ")?([a-z0-9-]+)\./)
       abort "Error: no master pod name found in sentinel response for #{redis_cluster}" unless match
 
       match[1]
     end
 
+  redis_cli = redis_cli_command(YAML.safe_load(read_kubectl("get pod #{master_pod} -o yaml")), "redis")
+
   puts "Running redis-cli on #{master_pod}..."
-  kubectl "exec -c redis -it #{master_pod} -- redis-cli #{ARGV.join(" ")}"
+  kubectl "exec -c redis -it #{master_pod} -- #{redis_cli} #{ARGV.join(" ")}"
 end
 
 def redis_sentinel_cli
@@ -2915,11 +2936,13 @@ def redis_sentinel_cli
       read_kubectl("get pods -l 'redis.reclaim-the-stack.com/cluster=#{redis_cluster},redis.reclaim-the-stack.com/component=sentinel' --field-selector=status.phase=Running -o yaml")
     end
 
-  sentinel_pod = YAML.safe_load(sentinel_pod_yaml).dig("items", 0, "metadata", "name")
+  sentinel_pod = YAML.safe_load(sentinel_pod_yaml).dig("items", 0)
   abort "Error: no sentinel pod found for '#{redis_cluster}'" unless sentinel_pod
 
-  puts "Running redis-cli on #{sentinel_pod}..."
-  kubectl "exec -c sentinel -it #{sentinel_pod} -- redis-cli -p 26379 #{ARGV.join(" ")}"
+  sentinel_pod_name = sentinel_pod.dig("metadata", "name")
+
+  puts "Running redis-cli on #{sentinel_pod_name}..."
+  kubectl "exec -c sentinel -it #{sentinel_pod_name} -- #{redis_cli_command(sentinel_pod, "sentinel")} -p 26379 #{ARGV.join(" ")}"
 end
 
 def redis_failover
@@ -2970,11 +2993,12 @@ def redis_failover
     sentinel_pod_yaml = read_kubectl("get pods -l redis.reclaim-the-stack.com/cluster=#{redis_cluster},redis.reclaim-the-stack.com/component=sentinel --field-selector=status.phase=Running -o yaml")
     abort "Error: no sentinel pod found for #{redis_cluster}" if sentinel_pod_yaml.empty?
 
-    sentinel_pod = YAML.safe_load(sentinel_pod_yaml).dig("items", 0, "metadata", "name")
+    sentinel_pod = YAML.safe_load(sentinel_pod_yaml).dig("items", 0)
+    sentinel_pod_name = sentinel_pod.dig("metadata", "name")
 
     # https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/#sentinel-commands
-    puts "Running redis-cli with SENTINEL FAILOVER command on #{sentinel_pod}..."
-    kubectl "exec -c sentinel -it #{sentinel_pod} -- redis-cli -p 26379 SENTINEL FAILOVER #{redis_cluster}"
+    puts "Running redis-cli with SENTINEL FAILOVER command on #{sentinel_pod_name}..."
+    kubectl "exec -c sentinel -it #{sentinel_pod_name} -- #{redis_cli_command(sentinel_pod, "sentinel")} -p 26379 SENTINEL FAILOVER #{redis_cluster}"
 
     # TODO: Do the kill connection rigamarole
   end
@@ -2992,7 +3016,7 @@ def redis_url
   endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-redis-master -o yaml"
   abort "Error: no master endpoint found for #{redis_cluster} (looked for #{redis_cluster}-redis-master)" if endpoint_yaml.empty?
 
-  puts "redis://#{redis_cluster}-redis-master.default.svc:6379"
+  puts redis_auth_secret_url(redis_cluster, "redis_url") || "redis://#{redis_cluster}-redis-master.default.svc:6379"
 end
 
 def redis_sentinel_url
@@ -3002,7 +3026,7 @@ def redis_sentinel_url
   endpoint_yaml = read_kubectl "get endpoints/#{redis_cluster}-redis-master -o yaml"
   abort "Error: no master endpoint found for #{redis_cluster} (looked for #{redis_cluster}-redis-master)" if endpoint_yaml.empty?
 
-  puts "redis-sentinel://rfs-#{redis_cluster}.default.svc:26379/mymaster"
+  puts redis_auth_secret_url(redis_cluster, "sentinel_url") || "redis-sentinel://rfs-#{redis_cluster}.default.svc:26379/mymaster"
 end
 
 def update
