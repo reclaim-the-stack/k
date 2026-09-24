@@ -1170,6 +1170,29 @@ def pg_unused_indexes
 end
 
 def run
+  if ARGV.empty?
+    puts "DESCRIPTION:"
+    puts "Runs a command in a new one-off pod, using the same image and environment as the application's web deployment (or first deployment / cronjob if there is no web deployment). The pod is deleted when the command finishes and the command's exit code is passed through." # rubocop:disable Layout/LineLength
+    puts ""
+    puts "Works both from a terminal and from scripts / CI. Interactive commands, like a shell or rails console, require a terminal." # rubocop:disable Layout/LineLength
+    puts ""
+    puts "The pod shuts down after 1 hour, so the command must finish within that time. Use --disable-timeout to extend this to 24 hours." # rubocop:disable Layout/LineLength
+    puts ""
+    puts "USAGE:"
+    puts "k run <application> [--tag=<tag>] <command> [--disable-timeout]"
+    puts ""
+    puts "OPTIONS:"
+    puts "--tag=<tag>" + gray(" use an image tag other than the deployed one, must come before the command")
+    puts "--disable-timeout" + gray(" keep the pod around for up to 24 hours instead of 1 hour")
+    puts ""
+    puts "EXAMPLES:"
+    puts "k run myapp bin/rails db:migrate:status"
+    puts "k run myapp \"bin/rails runner 'puts User.count'\"" + gray(" quote commands containing shell syntax")
+    puts "k run myapp --tag=abc123 bin/rails db:migrate" + gray(" run using a specific image tag")
+    puts "k run myapp bash" + gray(" open an interactive shell")
+    exit
+  end
+
   application = ARGV.delete_at(0)
   disable_timeout = ARGV.delete("--disable-timeout")
 
@@ -1246,20 +1269,31 @@ def run
     },
   }
 
-  puts "Creating pod #{pod_name}..."
-  system("echo '#{pod_template.to_json}' | kubectl --context #{KUBECTL_CONTEXT} apply -f -") || abort("failed to create pod")
+  require "shellwords"
 
-  unless kubectl("wait pod #{pod_name} --for=condition=ContainersReady --timeout=120s > /dev/null")
-    puts "failed to start pod, attempting to delete it..."
-    kubectl "delete pod #{pod_name} --wait=false"
-    abort
+  puts "Creating pod #{pod_name}..."
+  # Pipe the manifest via stdin rather than interpolating it into a shell command to avoid quoting issues
+  IO.popen(["kubectl", "--context", KUBECTL_CONTEXT, "apply", "-f", "-"], "w") { |io| io.write(pod_template.to_json) }
+  abort "failed to create pod" unless $?.success?
+
+  begin
+    abort "failed to start pod" unless kubectl("wait pod #{pod_name} --for=condition=ContainersReady --timeout=120s > /dev/null")
+
+    command = ARGV.join(" ")
+    puts "Running #{command} on #{pod_name}..."
+    # Only allocate a TTY when we have one, allows running from scripts / CI without kubectl warnings
+    tty_flag = $stdin.tty? ? "-it" : "-i"
+    kubectl "exec #{pod_name} -c run #{tty_flag} -- sh -c #{Shellwords.escape(command)}"
+    exit_status = $?.exitstatus || 1
+  rescue SignalException => e
+    puts "", "Received SIG#{Signal.signame(e.signo)}, aborting..."
+    exit_status = 128 + e.signo
+  ensure
+    # Always clean up the pod, including when the command is interrupted
+    kubectl("delete pod #{pod_name} --wait=false") || warn(red("failed to delete pod #{pod_name}"))
   end
 
-  command = ARGV.join(" ")
-  puts "Running #{command} on #{pod_name}..."
-  command_success = kubectl "exec #{pod_name} -c run -it -- sh -c '#{command}'"
-  kubectl("delete pod #{pod_name} --wait=false") || abort("failed to delete the pod")
-  abort unless command_success
+  exit exit_status
 end
 
 def console
