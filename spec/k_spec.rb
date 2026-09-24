@@ -176,6 +176,12 @@ RSpec.describe "k" do
       expect(err).to include "%{randomPassword} may only be used inside Secret manifests"
       expect(File.exist?("#{TEST_REPOSITORY_PATH}/applications/#{app_name}/templates/leaky-password.yaml")).to be false
       expect(File.read("#{TEST_REPOSITORY_PATH}/applications/#{app_name}/values.yaml")).to eq values
+
+      k "generate resource #{app_name} templated-secret", env: kubeseal_env
+
+      expect(status).not_to be_success
+      expect(err).to include "Secrets in generator templates can't use Helm templating"
+      expect(File.exist?("#{TEST_REPOSITORY_PATH}/applications/#{app_name}/templates/templated-secret.yaml")).to be false
     end
   end
 end
