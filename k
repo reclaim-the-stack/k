@@ -3028,7 +3028,8 @@ def redis_failover
     abort "Error: no sentinel pod found for #{redis_cluster}" if sentinel_pod_yaml.empty?
 
     sentinel_pod = YAML.safe_load(sentinel_pod_yaml).dig("items", 0)
-    sentinel_pod_name = sentinel_pod.dig("metadata", "name")
+    sentinel_pod_name = sentinel_pod&.dig("metadata", "name")
+    abort "Error: no sentinel pod name found for #{redis_cluster}" unless sentinel_pod_name
 
     # https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/#sentinel-commands
     puts "Running redis-cli with SENTINEL FAILOVER command on #{sentinel_pod_name}..."
