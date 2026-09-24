@@ -149,12 +149,8 @@ def seal_generated_secrets(template)
 
   documents = template.split(/^---\n/)
   documents.map do |document|
-    manifest = begin
-      yaml_load(document)
-    rescue Psych::Exception
-      nil # documents with Helm templating aren't necessarily valid YAML, and are never sealed
-    end
-    next document unless manifest.is_a?(Hash) && manifest["kind"] == "Secret"
+    # Documents with Helm templating aren't necessarily valid YAML, so match rather than parse
+    next document unless document.match?(/^kind:[ \t]*(["']?)Secret\1[ \t]*(#.*)?$/)
 
     if document.include?("{{")
       abort "Error: Secrets in generator templates can't use Helm templating since kubeseal needs the " \
@@ -163,6 +159,14 @@ def seal_generated_secrets(template)
 
     # Keep leading comments, seal the manifest itself
     comments = document[/\A(?:#.*\n|\s*\n)*/]
+    manifest = begin
+      yaml_load(document.delete_prefix(comments))
+    rescue Psych::SyntaxError
+      nil
+    end
+    unless manifest.is_a?(Hash) && manifest["kind"] == "Secret"
+      abort "Error: Secrets in generator templates must be plain YAML documents of their own, got:\n#{document}"
+    end
 
     source = Tempfile.new(["k-secret", ".yaml"])
     destination = Tempfile.new(["k-sealed-secret", ".yaml"])
