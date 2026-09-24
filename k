@@ -140,6 +140,58 @@ def kubeseal(source_path, destination_path)
   system_or_die "#{kubeseal_executable} --context #{KUBECTL_CONTEXT} -f #{source_path} -o yaml > #{destination_path}"
 end
 
+# Generator templates may contain plain Secret manifests, each as its own YAML document (separated
+# by ---) without any Helm templating. These are replaced with SealedSecrets via kubeseal before
+# anything is written, so plaintext values never end up in the repository. Use %{randomPassword}
+# to generate secret values (see generator_variables).
+def seal_generated_secrets(template)
+  require "tempfile"
+
+  documents = template.split(/^---\n/)
+  documents.map do |document|
+    next document unless document.match?(/^kind: Secret$/)
+
+    # Keep leading comments, seal the manifest itself
+    comments = document[/\A(?:#.*\n|\s*\n)*/]
+    manifest = begin
+      yaml_load(document.delete_prefix(comments))
+    rescue Psych::SyntaxError
+      nil
+    end
+    unless manifest.is_a?(Hash) && manifest["kind"] == "Secret"
+      abort "Error: Secrets in generator templates must be plain YAML documents of their own, got:\n#{document}"
+    end
+
+    source = Tempfile.new(["k-secret", ".yaml"])
+    destination = Tempfile.new(["k-sealed-secret", ".yaml"])
+    begin
+      File.write(source.path, manifest.to_yaml)
+      kubeseal source.path, destination.path
+      puts "Sealed secret #{bold(manifest.dig('metadata', 'name'))} with kubeseal"
+      comments + File.read(destination.path).delete_prefix("---\n")
+    ensure
+      source.close!
+      destination.close!
+    end
+  end.join("---\n")
+end
+
+# Variables available to generator templates via %{name}
+def generator_variables(**variables)
+  require "securerandom"
+
+  # A random 64 character hex string, the same for every occurrence in a template so it can be
+  # used both as a password and inside URLs. Only allowed inside Secret manifests.
+  variables.merge(randomPassword: SecureRandom.hex(32))
+end
+
+def abort_if_leaking_random_password!(variables, *contents)
+  return unless contents.any? { |content| content.include?(variables.fetch(:randomPassword)) }
+
+  abort "Error: %{randomPassword} may only be used inside Secret manifests since those get sealed, " \
+        "aborting without writing any files"
+end
+
 def yq_executable
   executable = ENV["YQ_PATH"] || "yq"
   abort "Must have yq installed" unless system "which #{executable} > /dev/null"
@@ -2379,13 +2431,14 @@ def generate_deployment
   default_image = "#{REGISTRY}/#{application}:latest"
 
   camel_name = name.split("-").map.with_index { |word, i| i == 0 ? word : word.capitalize }.join
-  deployment_template = format(
-    File.read("generators/deployments/#{type}.yaml"),
+  variables = generator_variables(
     application: application,
     name: name,
     camelName: camel_name,
     image: default_image,
   )
+  deployment_template = seal_generated_secrets(format(File.read("generators/deployments/#{type}.yaml"), variables))
+  abort_if_leaking_random_password!(variables, deployment_template)
 
   File.write("#{app_path}/templates/deployment-#{name}.yaml", deployment_template)
   puts "Created " + bold("#{app_path}/templates/deployment-#{name}.yaml")
@@ -2504,13 +2557,14 @@ def generate_resource
   end
 
   camel_name = name.split("-").map.with_index { |word, i| i == 0 ? word : word.capitalize }.join
-  resource_template = format(
-    File.read("generators/resources/#{type}.yaml"),
+  variables = generator_variables(
     application: application,
     name: name,
     camelName: camel_name,
     suffix: suffix,
   )
+  resource_template = seal_generated_secrets(format(File.read("generators/resources/#{type}.yaml"), variables))
+  abort_if_leaking_random_password!(variables, resource_template)
 
   File.write("#{app_path}/templates/#{name}.yaml", resource_template)
   puts "Created " + bold("#{app_path}/templates/#{name}.yaml")
