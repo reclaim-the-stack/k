@@ -146,5 +146,42 @@ RSpec.describe "k" do
       #   generated_values,
       # )
     end
+
+    it "seals Secrets in generator templates and never writes %{randomPassword} in plaintext" do
+      app_name = "test-app"
+      kubeseal_env = { "KUBESEAL_PATH" => "#{PROJECT_ROOT}/spec/fixtures/fake-kubeseal" }
+
+      k "generate application #{app_name}"
+      k "generate resource #{app_name} password-protected", env: kubeseal_env
+
+      expect(status).to be_success
+      expect(out).to include "Sealed secret #{app_name}-auth with kubeseal"
+
+      template = File.read("#{TEST_REPOSITORY_PATH}/applications/#{app_name}/templates/password-protected.yaml")
+      documents = template.split(/^---\n/)
+      sealed_secret = YAML.load(documents[1])
+      expect(documents[1]).to start_with "# The plain Secret below is replaced with a SealedSecret when generated\n"
+      expect(sealed_secret.fetch("kind")).to eq "SealedSecret"
+      expect(sealed_secret.dig("metadata", "name")).to eq "#{app_name}-auth"
+      expect(sealed_secret.dig("spec", "encryptedData").keys).to eq %w[password url]
+      expect(documents[2]).to include "name: {{ $name }}-service"
+      expect(template).not_to match(/\h{64}/)
+
+      values = File.read("#{TEST_REPOSITORY_PATH}/applications/#{app_name}/values.yaml")
+      expect(values).to include "secretKeyRef: { name: #{app_name}-auth, key: url }"
+
+      k "generate resource #{app_name} leaky-password", env: kubeseal_env
+
+      expect(status).not_to be_success
+      expect(err).to include "%{randomPassword} may only be used inside Secret manifests"
+      expect(File.exist?("#{TEST_REPOSITORY_PATH}/applications/#{app_name}/templates/leaky-password.yaml")).to be false
+      expect(File.read("#{TEST_REPOSITORY_PATH}/applications/#{app_name}/values.yaml")).to eq values
+
+      k "generate resource #{app_name} templated-secret", env: kubeseal_env
+
+      expect(status).not_to be_success
+      expect(err).to include "Secrets in generator templates can't use Helm templating"
+      expect(File.exist?("#{TEST_REPOSITORY_PATH}/applications/#{app_name}/templates/templated-secret.yaml")).to be false
+    end
   end
 end
