@@ -189,10 +189,11 @@ def generator_variables(template, **variables)
   require "securerandom"
 
   # %{randomPassword} and any suffixed variant like %{randomPassword2} or %{randomPasswordMetrics}
-  # become random 64 character hex strings. Each is the same for every occurrence in the template so
-  # it can be used both as a password and inside URLs. Only allowed inside Secret manifests.
+  # become random 64 character alphanumeric strings, so no URL escaping is needed in basic auth. Each is
+  # the same for every occurrence in the template so it can be used both as a password and inside URLs.
+  # Only allowed inside Secret manifests.
   random_passwords = template.scan(RANDOM_PASSWORD_VARIABLE).flatten.uniq.to_h do |name|
-    [name.to_sym, SecureRandom.hex(32)]
+    [name.to_sym, SecureRandom.alphanumeric(64)]
   end
 
   variables.merge(random_passwords)

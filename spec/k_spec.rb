@@ -169,7 +169,7 @@ RSpec.describe "k" do
       expect(encrypted_data.fetch("password_again")).to eq encrypted_data.fetch("password")
       expect(encrypted_data.fetch("metrics_password")).not_to eq encrypted_data.fetch("password")
       expect(documents[2]).to include "name: {{ $name }}-service"
-      expect(template).not_to match(/\h{64}/)
+      expect(template).not_to match(/[[:alnum:]]{64}/)
 
       values = File.read("#{TEST_REPOSITORY_PATH}/applications/#{app_name}/values.yaml")
       expect(values).to include "secretKeyRef: { name: #{app_name}-auth, key: url }"
