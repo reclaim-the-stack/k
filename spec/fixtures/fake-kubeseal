@@ -1,0 +1,22 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Stands in for kubeseal in specs: turns the Secret passed via -f into a SealedSecret whose
+# encryptedData is a digest of each value, so no plaintext is echoed back.
+
+require "digest"
+require "yaml"
+
+secret = YAML.load_file(ARGV[ARGV.index("-f") + 1])
+values = secret.fetch("stringData", {}).merge(secret.fetch("data", {}))
+metadata = { "name" => secret.dig("metadata", "name"), "namespace" => secret.dig("metadata", "namespace") }
+
+puts({
+  "apiVersion" => "bitnami.com/v1alpha1",
+  "kind" => "SealedSecret",
+  "metadata" => metadata,
+  "spec" => {
+    "encryptedData" => values.transform_values { |value| "sealed-#{Digest::SHA256.hexdigest(value.to_s)[0, 16]}" },
+    "template" => { "metadata" => metadata.dup }, # dup to avoid YAML aliases, which kubeseal doesn't output
+  },
+}.to_yaml)

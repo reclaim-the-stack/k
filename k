@@ -140,6 +140,64 @@ def kubeseal(source_path, destination_path)
   system_or_die "#{kubeseal_executable} --context #{KUBECTL_CONTEXT} -f #{source_path} -o yaml > #{destination_path}"
 end
 
+# Renders a generator template with Kernel#format and the given %{variables}.
+#
+# %{randomPassword} and any suffixed variant like %{randomPassword2} or %{randomPasswordMetrics}
+# become random 64 character alphanumeric strings, so no URL escaping is needed in basic auth. Each is
+# the same for every occurrence in the template so it can be used both as a password and inside URLs.
+#
+# Templates may contain plain Secret manifests, each as its own YAML document (separated by ---)
+# without any Helm templating. These are replaced with SealedSecrets via kubeseal, and rendering
+# aborts if a random password would end up anywhere else, so plaintext never reaches the repository.
+def render_generator_template(path, **variables)
+  require "securerandom"
+
+  template = File.read(path)
+  random_passwords = template.scan(/%\{(randomPassword\w*)\}/).flatten.uniq.to_h do |name|
+    [name.to_sym, SecureRandom.alphanumeric(64)]
+  end
+  rendered = seal_secrets(format(template, variables.merge(random_passwords)))
+
+  leaked_name = random_passwords.find { |_name, password| rendered.include?(password) }&.first
+  if leaked_name
+    abort "Error: %{#{leaked_name}} may only be used inside Secret manifests since those get sealed, " \
+          "aborting without writing any files"
+  end
+
+  rendered
+end
+
+def seal_secrets(template)
+  documents = template.split(/^---\n/)
+  documents.map do |document|
+    # Documents with Helm templating aren't necessarily valid YAML, so match rather than parse
+    next document unless document.match?(/^kind:[ \t]*(["']?)Secret\1[ \t]*(#.*)?$/)
+
+    if document.include?("{{")
+      abort "Error: Secrets in generator templates can't use Helm templating since kubeseal needs the " \
+            "literal manifest, got:\n#{document}"
+    end
+
+    manifest = begin
+      yaml_load(document)
+    rescue Psych::SyntaxError
+      nil
+    end
+    unless manifest.is_a?(Hash) && manifest["kind"] == "Secret"
+      abort "Error: Secrets in generator templates must be plain YAML documents of their own, got:\n#{document}"
+    end
+
+    Dir.mktmpdir do |dir|
+      File.write("#{dir}/secret.yaml", manifest.to_yaml)
+      kubeseal "#{dir}/secret.yaml", "#{dir}/sealed-secret.yaml"
+      puts "Sealed secret #{bold(manifest.dig('metadata', 'name'))} with kubeseal"
+
+      # Keep the leading comments of the original document
+      document[/\A(?:#.*\n|\s*\n)*/] + File.read("#{dir}/sealed-secret.yaml").delete_prefix("---\n")
+    end
+  end.join("---\n")
+end
+
 def yq_executable
   executable = ENV["YQ_PATH"] || "yq"
   abort "Must have yq installed" unless system "which #{executable} > /dev/null"
@@ -2379,8 +2437,8 @@ def generate_deployment
   default_image = "#{REGISTRY}/#{application}:latest"
 
   camel_name = name.split("-").map.with_index { |word, i| i == 0 ? word : word.capitalize }.join
-  deployment_template = format(
-    File.read("generators/deployments/#{type}.yaml"),
+  deployment_template = render_generator_template(
+    "generators/deployments/#{type}.yaml",
     application: application,
     name: name,
     camelName: camel_name,
@@ -2504,8 +2562,8 @@ def generate_resource
   end
 
   camel_name = name.split("-").map.with_index { |word, i| i == 0 ? word : word.capitalize }.join
-  resource_template = format(
-    File.read("generators/resources/#{type}.yaml"),
+  resource_template = render_generator_template(
+    "generators/resources/#{type}.yaml",
     application: application,
     name: name,
     camelName: camel_name,
