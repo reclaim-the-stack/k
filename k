@@ -140,13 +140,34 @@ def kubeseal(source_path, destination_path)
   system_or_die "#{kubeseal_executable} --context #{KUBECTL_CONTEXT} -f #{source_path} -o yaml > #{destination_path}"
 end
 
-# Generator templates may contain plain Secret manifests, each as its own YAML document (separated
-# by ---) without any Helm templating. These are replaced with SealedSecrets via kubeseal before
-# anything is written, so plaintext values never end up in the repository. Use %{randomPassword},
-# optionally with a suffix like %{randomPasswordMetrics}, to generate secret values (see generator_variables).
-def seal_generated_secrets(template)
-  require "tempfile"
+# Renders a generator template with Kernel#format and the given %{variables}.
+#
+# %{randomPassword} and any suffixed variant like %{randomPassword2} or %{randomPasswordMetrics}
+# become random 64 character alphanumeric strings, so no URL escaping is needed in basic auth. Each is
+# the same for every occurrence in the template so it can be used both as a password and inside URLs.
+#
+# Templates may contain plain Secret manifests, each as its own YAML document (separated by ---)
+# without any Helm templating. These are replaced with SealedSecrets via kubeseal, and rendering
+# aborts if a random password would end up anywhere else, so plaintext never reaches the repository.
+def render_generator_template(path, **variables)
+  require "securerandom"
 
+  template = File.read(path)
+  random_passwords = template.scan(/%\{(randomPassword\w*)\}/).flatten.uniq.to_h do |name|
+    [name.to_sym, SecureRandom.alphanumeric(64)]
+  end
+  rendered = seal_secrets(format(template, variables.merge(random_passwords)))
+
+  leaked_name = random_passwords.find { |_name, password| rendered.include?(password) }&.first
+  if leaked_name
+    abort "Error: %{#{leaked_name}} may only be used inside Secret manifests since those get sealed, " \
+          "aborting without writing any files"
+  end
+
+  rendered
+end
+
+def seal_secrets(template)
   documents = template.split(/^---\n/)
   documents.map do |document|
     # Documents with Helm templating aren't necessarily valid YAML, so match rather than parse
@@ -157,10 +178,8 @@ def seal_generated_secrets(template)
             "literal manifest, got:\n#{document}"
     end
 
-    # Keep leading comments, seal the manifest itself
-    comments = document[/\A(?:#.*\n|\s*\n)*/]
     manifest = begin
-      yaml_load(document.delete_prefix(comments))
+      yaml_load(document)
     rescue Psych::SyntaxError
       nil
     end
@@ -168,45 +187,15 @@ def seal_generated_secrets(template)
       abort "Error: Secrets in generator templates must be plain YAML documents of their own, got:\n#{document}"
     end
 
-    source = Tempfile.new(["k-secret", ".yaml"])
-    destination = Tempfile.new(["k-sealed-secret", ".yaml"])
-    begin
-      File.write(source.path, manifest.to_yaml)
-      kubeseal source.path, destination.path
+    Dir.mktmpdir do |dir|
+      File.write("#{dir}/secret.yaml", manifest.to_yaml)
+      kubeseal "#{dir}/secret.yaml", "#{dir}/sealed-secret.yaml"
       puts "Sealed secret #{bold(manifest.dig('metadata', 'name'))} with kubeseal"
-      comments + File.read(destination.path).delete_prefix("---\n")
-    ensure
-      source.close!
-      destination.close!
+
+      # Keep the leading comments of the original document
+      document[/\A(?:#.*\n|\s*\n)*/] + File.read("#{dir}/sealed-secret.yaml").delete_prefix("---\n")
     end
   end.join("---\n")
-end
-
-RANDOM_PASSWORD_VARIABLE = /%\{(randomPassword\w*)\}/
-
-# Variables available to generator templates via %{name}
-def generator_variables(template, **variables)
-  require "securerandom"
-
-  # %{randomPassword} and any suffixed variant like %{randomPassword2} or %{randomPasswordMetrics}
-  # become random 64 character alphanumeric strings, so no URL escaping is needed in basic auth. Each is
-  # the same for every occurrence in the template so it can be used both as a password and inside URLs.
-  # Only allowed inside Secret manifests.
-  random_passwords = template.scan(RANDOM_PASSWORD_VARIABLE).flatten.uniq.to_h do |name|
-    [name.to_sym, SecureRandom.alphanumeric(64)]
-  end
-
-  variables.merge(random_passwords)
-end
-
-def abort_if_leaking_random_password!(variables, *contents)
-  variables.each do |name, value|
-    next unless name.to_s.match?(/\ArandomPassword\w*\z/)
-    next unless contents.any? { |content| content.include?(value) }
-
-    abort "Error: %{#{name}} may only be used inside Secret manifests since those get sealed, " \
-          "aborting without writing any files"
-  end
 end
 
 def yq_executable
@@ -2448,16 +2437,13 @@ def generate_deployment
   default_image = "#{REGISTRY}/#{application}:latest"
 
   camel_name = name.split("-").map.with_index { |word, i| i == 0 ? word : word.capitalize }.join
-  template = File.read("generators/deployments/#{type}.yaml")
-  variables = generator_variables(
-    template,
+  deployment_template = render_generator_template(
+    "generators/deployments/#{type}.yaml",
     application: application,
     name: name,
     camelName: camel_name,
     image: default_image,
   )
-  deployment_template = seal_generated_secrets(format(template, variables))
-  abort_if_leaking_random_password!(variables, deployment_template)
 
   File.write("#{app_path}/templates/deployment-#{name}.yaml", deployment_template)
   puts "Created " + bold("#{app_path}/templates/deployment-#{name}.yaml")
@@ -2576,16 +2562,13 @@ def generate_resource
   end
 
   camel_name = name.split("-").map.with_index { |word, i| i == 0 ? word : word.capitalize }.join
-  template = File.read("generators/resources/#{type}.yaml")
-  variables = generator_variables(
-    template,
+  resource_template = render_generator_template(
+    "generators/resources/#{type}.yaml",
     application: application,
     name: name,
     camelName: camel_name,
     suffix: suffix,
   )
-  resource_template = seal_generated_secrets(format(template, variables))
-  abort_if_leaking_random_password!(variables, resource_template)
 
   File.write("#{app_path}/templates/#{name}.yaml", resource_template)
   puts "Created " + bold("#{app_path}/templates/#{name}.yaml")
