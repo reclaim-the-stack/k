@@ -163,7 +163,11 @@ RSpec.describe "k" do
       expect(documents[1]).to start_with "# The plain Secret below is replaced with a SealedSecret when generated\n"
       expect(sealed_secret.fetch("kind")).to eq "SealedSecret"
       expect(sealed_secret.dig("metadata", "name")).to eq "#{app_name}-auth"
-      expect(sealed_secret.dig("spec", "encryptedData").keys).to eq %w[password url]
+      encrypted_data = sealed_secret.dig("spec", "encryptedData")
+      expect(encrypted_data.keys).to eq %w[password password_again metrics_password url]
+      # The fake kubeseal outputs digests: the same variable gives the same value, a suffix a different one
+      expect(encrypted_data.fetch("password_again")).to eq encrypted_data.fetch("password")
+      expect(encrypted_data.fetch("metrics_password")).not_to eq encrypted_data.fetch("password")
       expect(documents[2]).to include "name: {{ $name }}-service"
       expect(template).not_to match(/\h{64}/)
 
@@ -173,7 +177,7 @@ RSpec.describe "k" do
       k "generate resource #{app_name} leaky-password", env: kubeseal_env
 
       expect(status).not_to be_success
-      expect(err).to include "%{randomPassword} may only be used inside Secret manifests"
+      expect(err).to include "%{randomPasswordLeaky} may only be used inside Secret manifests"
       expect(File.exist?("#{TEST_REPOSITORY_PATH}/applications/#{app_name}/templates/leaky-password.yaml")).to be false
       expect(File.read("#{TEST_REPOSITORY_PATH}/applications/#{app_name}/values.yaml")).to eq values
 
