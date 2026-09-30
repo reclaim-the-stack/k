@@ -1,0 +1,8 @@
+# Builds k as a native executable with Spinel (https://github.com/matz/spinel), see README.md
+
+[package]
+name = "k"
+exclude = ["packages"] # the yaml package's C is compiled as a dependency, not as part of this app
+
+[dependencies]
+yaml = { path = "packages/yaml" }
