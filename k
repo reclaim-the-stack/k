@@ -8,7 +8,11 @@
 # YQ_PATH - path to yq executable, defaults to "yq"
 # K_LISTEN_ON_ALL_INTERFACES - if set to "true", listen on 0.0.0.0 for local forwards
 
-require "date" # to protect against YAML bug present in certain psych versions: https://github.com/ruby/psych/pull/695
+unless RUBY_ENGINE == "spinel"
+  # To protect against YAML bug present in certain psych versions: https://github.com/ruby/psych/pull/695
+  # Called indirectly since Spinel resolves literal requires at compile time, before discarding this branch.
+  Kernel.send(:require, "date")
+end
 require "yaml"
 require "tmpdir"
 require "uri"
@@ -39,7 +43,9 @@ K_CONFIG = YAML.load_file(K_CONFIG_FILE)
 
 K_CONTEXT_NAME = (ENV["K_CONTEXT"] || K_CONFIG["context"]).freeze
 
-if (K_CONTEXT = K_CONFIG["contexts"][K_CONTEXT_NAME])
+K_CONTEXT = K_CONFIG["contexts"][K_CONTEXT_NAME]
+
+if K_CONTEXT
   ORGANIZATION = K_CONTEXT.fetch("github_organization").freeze
   GIT_HOST = K_CONTEXT.fetch("repository")[/[a-zA-Z]+.com/].freeze
   REPO_NAME = K_CONTEXT_NAME
@@ -89,7 +95,66 @@ def bold(string)
   $stdout.tty? ? "\e[1m#{string}\e[22m" : string
 end
 
-VERIFIED_PLUGINS = Array.new
+# The path of this k executable, for commands which invoke k (or the k_pg_proxy beside it) again.
+# A Spinel compiled k can't use __FILE__, which names the source file at compile time.
+def k_executable
+  return __FILE__ unless RUBY_ENGINE == "spinel"
+  return File.expand_path($PROGRAM_NAME) if $PROGRAM_NAME.include?("/")
+
+  executable = ENV.fetch("PATH", "").split(":")
+    .map { |dir| File.join(dir, $PROGRAM_NAME) }
+    .find { |path| File.executable?(path) }
+  executable || abort("Error: couldn't locate the k executable '#{$PROGRAM_NAME}' in PATH")
+end
+
+def k_directory
+  File.dirname(File.realpath(k_executable))
+end
+
+if RUBY_ENGINE == "spinel"
+  # Spinel has no process replacing Kernel#exec, so reach execl(3) directly
+  module SpinelExec
+    ffi_source <<~C
+      #include <stdio.h>
+      #include <unistd.h>
+
+      int k_exec_shell(const char *command) {
+        fflush(NULL);
+        execl("/bin/sh", "sh", "-c", command, (char *)NULL);
+        return -1;
+      }
+    C
+    ffi_func :k_exec_shell, [:str], :int
+  end
+end
+
+# Replace the k process with a shell command, like Kernel#exec
+def exec_command(command)
+  if RUBY_ENGINE == "spinel"
+    $stdout.flush
+    SpinelExec.k_exec_shell(command)
+    abort "Error: failed to execute #{command}"
+  else
+    exec command
+  end
+end
+
+# The exit status of the last child process like $?.exitstatus, nil if it was killed by a signal.
+# Decoded from the raw wait status since Spinel's $? is an Integer rather than a Process::Status.
+def last_exit_status
+  raw_status = $?.to_i
+  (raw_status & 0x7f).zero? ? raw_status >> 8 : nil
+end
+
+# Shell escaping as per Shellwords.escape, which isn't available in Spinel
+def shell_escape(string)
+  string = string.to_s
+  return "''" if string.empty?
+
+  string.gsub(%r{[^A-Za-z0-9_\-.,:+/@\n]}, "\\\\\\&").gsub("\n", "'\n'")
+end
+
+VERIFIED_PLUGINS = [] # rubocop:disable Style/MutableConstant -- appended to, and Spinel mistypes Array.new
 def require_plugin!(plugin)
   return if VERIFIED_PLUGINS.include?(plugin)
 
@@ -441,9 +506,9 @@ def clickhouse_cli
   query = ARGV.join(" ")
 
   if query.empty?
-    exec "kubectl --context #{KUBECTL_CONTEXT} exec -it #{pod} -c clickhouse -- clickhouse client"
+    exec_command "kubectl --context #{KUBECTL_CONTEXT} exec -it #{pod} -c clickhouse -- clickhouse client"
   else
-    exec "kubectl --context #{KUBECTL_CONTEXT} exec -it #{pod} -c clickhouse -- clickhouse client --format PrettyCompact --query \"#{query}\""
+    exec_command "kubectl --context #{KUBECTL_CONTEXT} exec -it #{pod} -c clickhouse -- clickhouse client --format PrettyCompact --query \"#{query}\""
   end
 end
 
@@ -486,7 +551,7 @@ def clickhouse_table_size
     end
 
   require "open3"
-  stdout, _stderr, _status = Open3.capture3("#{__FILE__}", "clickhouse:cli", cluster, query).first
+  stdout, _stderr, _status = Open3.capture3(k_executable, "clickhouse:cli", cluster, query).first
   puts stdout
 
   puts gray("Pass a table name as additional argument to zoom in on a specific table") unless table
@@ -565,13 +630,13 @@ def contexts_add
 
   default_context_name = repository_name
   print "What would you like to name this context? [#{default_context_name}] "
-  context_name = readline.strip
+  context_name = $stdin.readline.strip
   context_name = default_context_name if context_name.empty?
 
   if K_CONFIG.fetch("contexts").key?(context_name)
     puts "A context named '#{context_name}' already exists"
     print "What would you like to name it instead?"
-    context_name = readline.strip
+    context_name = $stdin.readline.strip
   end
 
   abort "Error: context name cannot be blank" if context_name.empty?
@@ -581,11 +646,11 @@ def contexts_add
 
   default_registry = "docker.io"
   print "Which Docker registry should be used for this context? [#{default_registry}] "
-  registry = readline.strip
+  registry = $stdin.readline.strip
   registry = default_registry if registry.empty?
 
   print "Which Docker registry namespace should be used for this context? [#{github_organization}] "
-  registry_namespace = readline.strip
+  registry_namespace = $stdin.readline.strip
   registry_namespace = github_organization if registry_namespace.empty?
   puts ""
 
@@ -612,7 +677,7 @@ def contexts_add
   end
   default_context = current_kubectl_context.empty? ? kubectl_contexts.first : current_kubectl_context
   print "Which kubectl context should be used for this context? [#{default_context}] "
-  kubernetes_context = readline.strip
+  kubernetes_context = $stdin.readline.strip
   kubernetes_context = default_context if kubernetes_context.empty?
   puts ""
 
@@ -780,7 +845,7 @@ def logs
   kail_arguments = deployment_names.map { |name| "-d #{name}" }.join(" ")
 
   puts "Tailing logs from #{deployment_names.join(', ')}..."
-  exec "#{kail_executable} --context #{KUBECTL_CONTEXT} #{kail_arguments}"
+  exec_command "#{kail_executable} --context #{KUBECTL_CONTEXT} #{kail_arguments}"
 end
 
 def logs_search
@@ -1643,12 +1708,16 @@ def run
     },
   }
 
-  require "shellwords"
+  require "open3"
 
   puts "Creating pod #{pod_name}..."
   # Pipe the manifest via stdin rather than interpolating it into a shell command to avoid quoting issues
-  IO.popen(["kubectl", "--context", KUBECTL_CONTEXT, "apply", "-f", "-"], "w") { |io| io.write(pod_template.to_json) }
-  abort "failed to create pod" unless $?.success?
+  apply_output, apply_status = Open3.capture2(
+    "kubectl", "--context", KUBECTL_CONTEXT, "apply", "-f", "-",
+    stdin_data: pod_template.to_json
+  )
+  print apply_output
+  abort "failed to create pod" unless apply_status.success?
 
   begin
     abort "failed to start pod" unless kubectl("wait pod #{pod_name} --for=condition=ContainersReady --timeout=120s > /dev/null")
@@ -1657,8 +1726,8 @@ def run
     puts "Running #{command} on #{pod_name}..."
     # Only allocate a TTY when we have one, allows running from scripts / CI without kubectl warnings
     tty_flag = $stdin.tty? ? "-it" : "-i"
-    kubectl "exec #{pod_name} -c run #{tty_flag} -- sh -c #{Shellwords.escape(command)}"
-    exit_status = $?.exitstatus || 1
+    kubectl "exec #{pod_name} -c run #{tty_flag} -- sh -c #{shell_escape(command)}"
+    exit_status = last_exit_status || 1
   rescue SignalException => e
     puts "", "Received SIG#{Signal.signame(e.signo)}, aborting..."
     exit_status = 128 + e.signo
@@ -1674,7 +1743,7 @@ def console
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k console <application>" unless application
 
-  system %(#{__dir__}/k run #{application} "EAGER_LOAD=false IRB_USE_AUTOCOMPLETE=true bundle exec rails console")
+  system %(#{k_executable} run #{application} "EAGER_LOAD=false IRB_USE_AUTOCOMPLETE=true bundle exec rails console")
 end
 
 def config
@@ -1784,7 +1853,7 @@ def config_edit
     puts ""
 
     print "> "
-    input = readline.to_i
+    input = $stdin.readline.to_i
     puts ""
 
     case input
@@ -1796,7 +1865,7 @@ def config_edit
       selected_secret = shared_secrets[input - 2]
       puts "Editing shared secret: #{selected_secret}..."
       puts ""
-      exec "k secrets:edit #{selected_secret}"
+      exec_command "k secrets:edit #{selected_secret}"
     end
   end
 end
@@ -2013,13 +2082,12 @@ def releases
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k releases <application>" unless application
 
-  require "time"
-
   in_argo_repo do
     releases = lookup_latest_releases(application)
     abort "Error: No releases found for #{application}" if releases.empty?
 
-    longest_subject = releases.map(&:subject).max_by(&:length)
+    # A block rather than &:subject, which Spinel fails to compile for these Structs
+    longest_subject = releases.map { |release| release.subject }.max_by(&:length) # rubocop:disable Style/SymbolProc
 
     puts gray("=== ") + bold(application) + bold(" Releases")
     puts ""
@@ -2041,11 +2109,10 @@ def rollback
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k rollback <application>" unless application
 
-  require "time"
-
   in_argo_repo do
     releases = lookup_latest_releases(application)
-    longest_subject = releases.map(&:subject).max_by(&:length)
+    # A block rather than &:subject, which Spinel fails to compile for these Structs
+    longest_subject = releases.map { |release| release.subject }.max_by(&:length) # rubocop:disable Style/SymbolProc
 
     puts gray("=== ") + bold(application) + bold(" Rollback")
     puts ""
@@ -2066,7 +2133,7 @@ def rollback
 
     number_of_choices = releases.length - 1
     print "Which version would you like to rollback to [1-#{number_of_choices}]: "
-    index = readline.to_i
+    index = $stdin.readline.to_i
     selected_release = releases[index]
     abort "Error: Selection must be a number between 1 and #{number_of_choices}" unless index > 0 && selected_release
 
@@ -2074,7 +2141,7 @@ def rollback
     releases_to_undo = releases[0..index-1]
     puts "Note: This will undo the following previous releases: #{releases_to_undo.map(&:pretty_sha).join(' ')}"
     print "Confirm rollback to version #{bold(selected_release.pretty_sha)} [y/N] "
-    choice = readline.chomp
+    choice = $stdin.readline.chomp
     puts ""
 
     unless choice.upcase == "Y"
@@ -2485,7 +2552,7 @@ def sh
     end
 
   command = "sh -c 'which bash > /dev/null && bash || sh'"
-  exec "kubectl exec --context #{KUBECTL_CONTEXT} -it #{resource_type}/#{resource} -- #{command}"
+  exec_command "kubectl exec --context #{KUBECTL_CONTEXT} -it #{resource_type}/#{resource} -- #{command}"
 end
 
 def _exec
@@ -2493,7 +2560,7 @@ def _exec
   abort "Must pass name of deployment, eg. k exec <deployment>" unless deployment
   abort "Must pass a command to run, eg. k exec <deployment> <command>" if ARGV.empty?
 
-  exec "kubectl exec  --context #{KUBECTL_CONTEXT} -it deployments/#{deployment} -- #{ARGV.join(' ')}"
+  exec_command "kubectl exec  --context #{KUBECTL_CONTEXT} -it deployments/#{deployment} -- #{ARGV.join(' ')}"
 end
 
 def nodes
@@ -2584,7 +2651,7 @@ def playground
     '
   )
 
-  exec kubectl_command
+  exec_command kubectl_command
 end
 
 def generate
@@ -2686,7 +2753,7 @@ def generate_deployment
     deployment_types.each_with_index do |type, index|
       puts "#{index + 1}. #{type.capitalize}"
     end
-    selection = readline.to_i
+    selection = $stdin.readline.to_i
 
     abort "Error: invalid selection" unless (1..deployment_types.length).include?(selection)
     type = deployment_types[selection - 1]
@@ -2694,7 +2761,7 @@ def generate_deployment
 
   if type == "other"
     print "Please give the deployment a name: "
-    name = readline.strip
+    name = $stdin.readline.strip
     abort "Error: didn't provide a name" if name.empty?
     puts ""
   else
@@ -2703,7 +2770,7 @@ def generate_deployment
 
   if File.exist?("#{app_path}/templates/deployment-#{name}.yaml")
     print "A deployment named deployment-#{name} already exists for this application, please provide a suffix: "
-    suffix = readline.strip.delete_prefix("-")
+    suffix = $stdin.readline.strip.delete_prefix("-")
     puts
 
     abort "Error: didn't provide a suffix" if suffix.empty?
@@ -2818,7 +2885,7 @@ def generate_resource
     resource_types.each_with_index do |type, index|
       puts "#{index + 1}. #{type.capitalize}"
     end
-    selection = readline.to_i
+    selection = $stdin.readline.to_i
     puts
     abort "Error: invalid selection" unless (1..resource_types.length).include?(selection)
     type = resource_types[selection - 1]
@@ -2828,7 +2895,7 @@ def generate_resource
 
   if File.exist?("#{app_path}/templates/#{name}.yaml")
     print "A #{type} resource already exists for this application, please provide a suffix: "
-    suffix = readline.strip.delete_prefix("-")
+    suffix = $stdin.readline.strip.delete_prefix("-")
 
     abort "Error: didn't provide a suffix" if suffix.empty?
 
@@ -2954,13 +3021,11 @@ def node_failover
 
   puts
   puts "Do you want to failover these databases [y/N]"
-  choice = readline.chomp
+  choice = $stdin.readline.chomp
   unless choice.upcase == "Y"
     puts "Failover aborted!"
     exit
   end
-
-  k_executable = __FILE__
 
   primaries.each do |primary|
     labels = primary.fetch("metadata").fetch("labels")
@@ -3018,7 +3083,7 @@ def node_purge_pvcs
   puts
   puts "Proceed with permanent deletion of these PVCs [y/N]"
 
-  choice = readline.chomp
+  choice = $stdin.readline.chomp
   unless choice.upcase == "Y"
     puts "PVC purge aborted!"
     exit
@@ -3107,7 +3172,8 @@ def opensearch_dashboards
     if system "which pbcopy > /dev/null 2>&1"
       puts "Storing dashboards password in clipboard..."
       puts
-      IO.popen("pbcopy", "w") { |clipboard| clipboard.write(password) }
+      require "open3"
+      Open3.capture2("pbcopy", stdin_data: password)
       puts "Login with username 'admin' and paste the password from your clipboard"
     else
       puts "Login with username 'admin' and paste the password '#{password}'"
@@ -3544,7 +3610,7 @@ def lookup_latest_releases(application)
   git_log = `
     git log \
       -n 15 \
-      --pretty=format:'%H<col>%aN<col>%aD<col>%ar<col>%s<col>%b<row>' \
+      --pretty=format:'%H<col>%aN<col>%at<col>%ar<col>%s<col>%b<row>' \
       --follow -- applications/#{application}/values.yaml
   `
   release_struct = Struct.new(:sha, :pretty_sha, :author, :time, :relative_time, :subject, :body)
@@ -3556,7 +3622,7 @@ def lookup_latest_releases(application)
       sha,
       sha[0..10],
       author,
-      Time.parse(time).getlocal,
+      Time.at(time.to_i),
       relative_time,
       subject.delete_prefix("#{application}: "),
       body,
