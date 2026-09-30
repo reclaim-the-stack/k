@@ -2827,7 +2827,7 @@ def opensearch_overview
     when "yellow" then yellow("Yellow")
     when "red" then red("Red")
     else
-      cluster_health["status"] ? cluster_health["status"].to_s.capitalize : "Unknown"
+      cluster_stats["status"] ? cluster_stats["status"].to_s.capitalize : "Unknown"
     end
 
   format_number = lambda do |value|
