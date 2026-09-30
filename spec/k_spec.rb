@@ -7,6 +7,8 @@ require "yaml"
 
 PROJECT_ROOT = "#{__dir__}/.."
 HOME = "#{PROJECT_ROOT}/tmp/dummy-home"
+# Run the specs against another k executable, eg. a Spinel build: K_EXECUTABLE=spinel/build/bin/k bundle exec rspec
+K_EXECUTABLE = File.expand_path(ENV.fetch("K_EXECUTABLE", "#{PROJECT_ROOT}/k"))
 TEST_REPOSITORY_PATH = "#{HOME}/.k/test"
 
 RSpec.describe "k" do
@@ -19,9 +21,9 @@ RSpec.describe "k" do
       # debugger if we want to get a better understanding of what k is doing.
       # Temporarily passing debug: true while figuring something out changes
       # execution to use #system instead which allows for more debugging options.
-      return system(env, "#{PROJECT_ROOT}/k #{arguments}") if debug
+      return system(env, "#{K_EXECUTABLE} #{arguments}") if debug
 
-      out, err, status = Open3.capture3(env, "#{PROJECT_ROOT}/k #{arguments}")
+      out, err, status = Open3.capture3(env, "#{K_EXECUTABLE} #{arguments}")
       @out = out
       @err = err
       @status = status
