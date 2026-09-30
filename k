@@ -281,8 +281,6 @@ def print_commands
   puts "k exec <deployment> <command>" + gray(" execute a command on a live deployment")
 end
 
-PRIVATE_METHODS_BEFORE_COMMANDS = private_methods.dup.freeze
-
 def applications
   in_argo_repo do
     applications = Dir.glob("applications/*/Chart.yaml").map { |path| path.split("/")[1] }
@@ -2274,9 +2272,12 @@ def generate
   sub_command = ARGV.delete_at(0)
 
   if sub_command
-    method = "generate_#{sub_command}"
-    abort "Error: no generator named '#{sub_command}'" unless private_methods.include?(method.to_sym)
-    send(method)
+    case sub_command
+    when "application" then generate_application
+    when "deployment" then generate_deployment
+    when "resource" then generate_resource
+    else abort "Error: no generator named '#{sub_command}'"
+    end
   else
     puts "Generator commands can help with creating Kubernetes resources and should be run from inside " \
          "your own clone of the gitops repository."
@@ -3098,7 +3099,84 @@ def update
   system "brew reinstall k"
 end
 
-PRIVATE_METHODS_AFTER_COMMANDS = private_methods - PRIVATE_METHODS_BEFORE_COMMANDS
+# Every k command, keyed by method name. Dispatching through an explicit table rather than #send
+# lets k be compiled ahead of time by Spinel, which needs every call to be known at compile time.
+COMMANDS = {
+  "applications" => -> { applications },
+  "apps" => -> { apps },
+  "build_and_push" => -> { build_and_push },
+  "clickhouse" => -> { clickhouse },
+  "clickhouse_cli" => -> { clickhouse_cli },
+  "clickhouse_table_size" => -> { clickhouse_table_size },
+  "contexts" => -> { contexts },
+  "contexts_add" => -> { contexts_add },
+  "contexts_remove" => -> { contexts_remove },
+  "contexts_use" => -> { contexts_use },
+  "kibana" => -> { kibana },
+  "config_set" => -> { config_set },
+  "cnpg" => -> { cnpg },
+  "dashboard" => -> { dashboard },
+  "k" => -> { k },
+  "logs" => -> { logs },
+  "logs_search" => -> { logs_search },
+  "pg" => -> { pg },
+  "pg_failover" => -> { pg_failover },
+  "pg_password" => -> { pg_password },
+  "pg_pods" => -> { pg_pods },
+  "pg_primaries" => -> { pg_primaries },
+  "pg_proxy" => -> { pg_proxy },
+  "pg_psql" => -> { pg_psql },
+  "pg_resources" => -> { pg_resources },
+  "pg_url" => -> { pg_url },
+  "pg_bloat" => -> { pg_bloat },
+  "pg_cache" => -> { pg_cache },
+  "pg_index_usage" => -> { pg_index_usage },
+  "pg_seq_scans" => -> { pg_seq_scans },
+  "pg_table_size" => -> { pg_table_size },
+  "pg_unused_indexes" => -> { pg_unused_indexes },
+  "run" => -> { run },
+  "console" => -> { console },
+  "config" => -> { config },
+  "config_edit" => -> { config_edit },
+  "config_get" => -> { config_get },
+  "deploy" => -> { deploy },
+  "elasticsearch_url" => -> { elasticsearch_url },
+  "env_edit" => -> { env_edit },
+  "releases" => -> { releases },
+  "rollback" => -> { rollback },
+  "scale" => -> { scale },
+  "secrets" => -> { secrets },
+  "secrets_edit" => -> { secrets_edit },
+  "secrets_get" => -> { secrets_get },
+  "secrets_set" => -> { secrets_set },
+  "secrets_unset" => -> { secrets_unset },
+  "secrets_create" => -> { secrets_create },
+  "sh" => -> { sh },
+  "_exec" => -> { _exec },
+  "nodes" => -> { nodes },
+  "verify" => -> { verify },
+  "playground" => -> { playground },
+  "generate" => -> { generate },
+  "generate_application" => -> { generate_application },
+  "generate_deployment" => -> { generate_deployment },
+  "generate_resource" => -> { generate_resource },
+  "node_pvcs" => -> { node_pvcs },
+  "node_failover" => -> { node_failover },
+  "node_purge_pvcs" => -> { node_purge_pvcs },
+  "opensearch_url" => -> { opensearch_url },
+  "opensearch_dashboards" => -> { opensearch_dashboards },
+  "opensearch_dashboard" => -> { opensearch_dashboard },
+  "opensearch_overview" => -> { opensearch_overview },
+  "restart" => -> { restart },
+  "redis" => -> { redis },
+  "redis_cli" => -> { redis_cli },
+  "redis_sentinel_cli" => -> { redis_sentinel_cli },
+  "redis_failover" => -> { redis_failover },
+  "redis_primaries" => -> { redis_primaries },
+  "redis_url" => -> { redis_url },
+  "redis_sentinel_url" => -> { redis_sentinel_url },
+  "update" => -> { update },
+}.freeze
 
 def namespace_prefix(namespace)
   namespace == "default" ? "" : "#{namespace}__"
@@ -3184,18 +3262,20 @@ def dispatch(command)
   command = "_exec" if command == "exec"
   method = command.split(/[:-]/).join("_")
 
-  send method
-rescue NoMethodError => e
-  # If the NoMethodError happened inside of the actual command we want to raise it
-  raise unless e.name.to_s == method.to_s
+  handler = COMMANDS[method]
+  unless handler
+    puts "Error: no command called '#{command}'"
+    puts ""
+    unless RUBY_ENGINE == "spinel" # DidYouMean isn't available in Spinel
+      did_you_mean = DidYouMean::SpellChecker.new(dictionary: COMMANDS.keys)
+        .correct(method)
+        .map { |suggestion| "'#{suggestion.split('_').join(':')}'" }
+      puts "Perhaps you meant #{did_you_mean.join(' or ')}?" unless did_you_mean.empty?
+    end
+    exit 1
+  end
 
-  did_you_mean = DidYouMean::SpellChecker.new(dictionary: PRIVATE_METHODS_AFTER_COMMANDS)
-    .correct(method)
-    .map { |suggestion| "'#{suggestion.to_s.split('_').join(':')}'" }
-  puts "Error: no command called '#{command}'"
-  puts ""
-  puts "Perhaps you meant #{did_you_mean.join(' or ')}?" unless did_you_mean.empty?
-  exit 1 # using 'abort' somehow automatically prints the Exception
+  handler.call
 rescue Interrupt
   exit
 end
