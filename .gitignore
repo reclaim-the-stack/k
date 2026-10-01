@@ -10,3 +10,7 @@ dist/
 spec/examples.txt
 
 tmp/
+
+# Spinel builds
+spinel/build/
+spinel/packages/*/build/

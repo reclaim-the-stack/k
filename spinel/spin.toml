@@ -1,0 +1,13 @@
+# Builds k as a native executable with Spinel (https://github.com/matz/spinel), see README.md
+
+[package]
+name = "k"
+exclude = ["packages"] # the packages' C is compiled as dependencies, not as part of this app
+
+[dependencies]
+did_you_mean = { path = "packages/did_you_mean" }
+kernel_exec = { path = "packages/kernel_exec" }
+kernel_spawn = { path = "packages/kernel_spawn" }
+openssl_crypto = { path = "packages/openssl_crypto" }
+sigint_interrupt = { path = "packages/sigint_interrupt" }
+yaml = { path = "packages/yaml" }
