@@ -1,4 +1,0 @@
-[package]
-name = "kernel_dir"
-version = "0.1.0"
-sources = ["kernel_dir.c"]

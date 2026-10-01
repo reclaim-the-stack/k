@@ -15,7 +15,6 @@ require "uri"
 if RUBY_ENGINE == "spinel"
   # Part of CRuby, provided for Spinel by spinel/packages
   require "did_you_mean"
-  require "kernel_dir"
   require "kernel_exec"
 end
 

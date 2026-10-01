@@ -4,10 +4,6 @@
 version = "2.0.0"
 path = "packages/did_you_mean"
 
-[lock.kernel_dir]
-version = "0.1.0"
-path = "packages/kernel_dir"
-
 [lock.kernel_exec]
 version = "0.1.0"
 path = "packages/kernel_exec"
