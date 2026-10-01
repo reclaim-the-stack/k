@@ -510,9 +510,10 @@ def clickhouse_table_size
       SQL
     end
 
-  require "open3"
-  stdout, _stderr, _status = Open3.capture3("#{__dir__}/k", "clickhouse:cli", cluster, query).first
-  puts stdout
+  pod = ClickHouse.pods_by_name(cluster).min
+  abort "Error: no pods found for cluster '#{cluster}'" unless pod
+
+  puts read_kubectl(%(exec #{pod} -c clickhouse -- clickhouse client --format PrettyCompact --query "#{query}"))
 
   puts gray("Pass a table name as additional argument to zoom in on a specific table") unless table
 end
@@ -1703,7 +1704,7 @@ def console
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k console <application>" unless application
 
-  system %(#{__dir__}/k run #{application} "EAGER_LOAD=false IRB_USE_AUTOCOMPLETE=true bundle exec rails console")
+  invoke_command("run", application, "EAGER_LOAD=false IRB_USE_AUTOCOMPLETE=true bundle exec rails console")
 end
 
 def config
@@ -2987,8 +2988,6 @@ def node_failover
     exit
   end
 
-  k_executable = "#{__dir__}/k"
-
   primaries.each do |primary|
     labels = primary.fetch("metadata").fetch("labels")
 
@@ -2996,19 +2995,21 @@ def node_failover
       cluster_name = labels.fetch("cnpg.io/cluster")
       puts
       puts "Failing over CloudnativePG cluster #{cluster_name}..."
-      system "#{k_executable} pg:failover #{cluster_name}"
+      invoke_command("pg_failover", cluster_name)
     elsif labels.key?("redisfailovers-role")
       cluster_name = labels.fetch("redisfailovers.databases.spotahome.com/name")
       puts
       puts "Failing over Spotahome Redis cluster #{cluster_name}..."
       k_compatible_name = cluster_name.delete_suffix("-redis")
-      system "#{k_executable} redis:failover #{k_compatible_name}"
+      invoke_command("redis_failover", k_compatible_name)
     elsif labels.key?("redis.reclaim-the-stack.com/role")
       cluster_name = labels.fetch("redis.reclaim-the-stack.com/cluster")
       puts
       puts "Failing over Reclaim the Stack Redis cluster #{cluster_name}..."
-      system "#{k_executable} redis:failover #{cluster_name}"
+      invoke_command("redis_failover", cluster_name)
     end
+  rescue SystemExit
+    next # a failover aborting doesn't stop the others
   end
 end
 
@@ -3604,6 +3605,12 @@ def detect_deploy_domain(primary_subdomain = "argocd")
 end
 
 # rubocop:enable Style/StringConcatenation
+
+# Runs another k command in this process, as if k had been invoked with it and `arguments`
+def invoke_command(name, *arguments)
+  ARGV.replace(arguments)
+  COMMANDS.fetch(name).call
+end
 
 def dispatch(command)
   command = "_exec" if command == "exec"
