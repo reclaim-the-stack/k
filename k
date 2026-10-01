@@ -13,8 +13,9 @@ require "tmpdir"
 require "uri"
 
 if RUBY_ENGINE == "spinel"
-  # Part of CRuby, vendored for Spinel in spinel/packages
+  # Part of CRuby, provided for Spinel by spinel/packages
   require "did_you_mean"
+  require "kernel_dir"
   require "kernel_exec"
 end
 
@@ -94,22 +95,6 @@ end
 
 def bold(string)
   $stdout.tty? ? "\e[1m#{string}\e[22m" : string
-end
-
-# The path of this k executable, for commands which invoke k (or the k_pg_proxy beside it) again.
-# A Spinel compiled k can't use __FILE__, which names the source file at compile time.
-def k_executable
-  return __FILE__ unless RUBY_ENGINE == "spinel"
-  return File.expand_path($PROGRAM_NAME) if $PROGRAM_NAME.include?("/")
-
-  executable = ENV.fetch("PATH", "").split(":")
-    .map { |dir| File.join(dir, $PROGRAM_NAME) }
-    .find { |path| File.executable?(path) }
-  executable || abort("Error: couldn't locate the k executable '#{$PROGRAM_NAME}' in PATH")
-end
-
-def k_directory
-  File.dirname(File.realpath(k_executable))
 end
 
 # The exit status of the last child process like $?.exitstatus, nil if it was killed by a signal.
@@ -526,7 +511,7 @@ def clickhouse_table_size
     end
 
   require "open3"
-  stdout, _stderr, _status = Open3.capture3(k_executable, "clickhouse:cli", cluster, query).first
+  stdout, _stderr, _status = Open3.capture3("#{__dir__}/k", "clickhouse:cli", cluster, query).first
   puts stdout
 
   puts gray("Pass a table name as additional argument to zoom in on a specific table") unless table
@@ -1718,7 +1703,7 @@ def console
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k console <application>" unless application
 
-  system %(#{k_executable} run #{application} "EAGER_LOAD=false IRB_USE_AUTOCOMPLETE=true bundle exec rails console")
+  system %(#{__dir__}/k run #{application} "EAGER_LOAD=false IRB_USE_AUTOCOMPLETE=true bundle exec rails console")
 end
 
 def config
@@ -3001,6 +2986,8 @@ def node_failover
     puts "Failover aborted!"
     exit
   end
+
+  k_executable = "#{__dir__}/k"
 
   primaries.each do |primary|
     labels = primary.fetch("metadata").fetch("labels")

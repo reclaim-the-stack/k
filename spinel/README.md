@@ -2,7 +2,7 @@
 
 [Spinel](https://github.com/matz/spinel) compiles Ruby ahead of time into a native executable. Built this way `k` is a single ~2 MB binary depending on nothing but libc, starting in a few milliseconds instead of loading a Ruby interpreter.
 
-The `k` script stays the source of truth and keeps running on CRuby as before. `bin/k.rb` is a symlink to it, and `packages/` provides YAML, DidYouMean and `Kernel#exec`, which Spinel lacks.
+The `k` script stays the source of truth and keeps running on CRuby as before. `bin/k.rb` is a symlink to it, and `packages/` provides YAML, DidYouMean, `Kernel#exec` and `__dir__`, which Spinel lacks.
 
 ## Building
 
@@ -40,5 +40,5 @@ Spinel compiles a subset of Ruby, resolving every method call at compile time. I
 - No `IO.popen` (use `Open3`), `Kernel#readline` (use `$stdin.readline`) or `Shellwords` (use `shell_escape`)
 - A method ending in a `system` call returns false under Spinel, assign the result and return that instead
 - `$?` is the raw wait status Integer rather than a `Process::Status`, use `last_exit_status`
-- No `__FILE__` / `__dir__` for locating k itself, they name the source file at compile time, use `k_executable` / `k_directory`
+- `__FILE__` names the source file at compile time, and being a keyword it can't be shimmed. `__dir__` is shimmed to answer the directory of the running executable, so invoke k itself as `"#{__dir__}/k"`
 - Beware that some unsupported constructs compile into code raising `NoMethodError` at runtime rather than failing the build, so exercise changed commands with the compiled binary
