@@ -2,7 +2,8 @@
 
 [package]
 name = "k"
-exclude = ["packages"] # the yaml package's C is compiled as a dependency, not as part of this app
+exclude = ["packages"] # the packages' C is compiled as dependencies, not as part of this app
 
 [dependencies]
+did_you_mean = { path = "packages/did_you_mean" }
 yaml = { path = "packages/yaml" }

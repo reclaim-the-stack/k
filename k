@@ -17,6 +17,10 @@ require "yaml"
 require "tmpdir"
 require "uri"
 
+if RUBY_ENGINE == "spinel"
+  require "did_you_mean" # preloaded by CRuby, vendored for Spinel in spinel/packages/did_you_mean
+end
+
 # Older versions of YAML (ie. in Ruby 2.5) don't have unsafe_load
 def yaml_load(string)
   YAML.respond_to?(:unsafe_load) ? YAML.unsafe_load(string) : YAML.load(string)
@@ -3651,12 +3655,10 @@ def dispatch(command)
   unless handler
     puts "Error: no command called '#{command}'"
     puts ""
-    unless RUBY_ENGINE == "spinel" # DidYouMean isn't available in Spinel
-      did_you_mean = DidYouMean::SpellChecker.new(dictionary: COMMANDS.keys)
-        .correct(method)
-        .map { |suggestion| "'#{suggestion.split('_').join(':')}'" }
-      puts "Perhaps you meant #{did_you_mean.join(' or ')}?" unless did_you_mean.empty?
-    end
+    did_you_mean = DidYouMean::SpellChecker.new(dictionary: COMMANDS.keys)
+      .correct(method)
+      .map { |suggestion| "'#{suggestion.split('_').join(':')}'" }
+    puts "Perhaps you meant #{did_you_mean.join(' or ')}?" unless did_you_mean.empty?
     exit 1
   end
 

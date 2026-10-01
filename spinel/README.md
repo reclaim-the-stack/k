@@ -2,7 +2,7 @@
 
 [Spinel](https://github.com/matz/spinel) compiles Ruby ahead of time into a native executable. Built this way `k` is a single ~2 MB binary depending on nothing but libc, starting in a few milliseconds instead of loading a Ruby interpreter.
 
-The `k` script stays the source of truth and keeps running on CRuby as before. `bin/k.rb` is a symlink to it, and `packages/yaml` provides the YAML support Spinel lacks.
+The `k` script stays the source of truth and keeps running on CRuby as before. `bin/k.rb` is a symlink to it, and `packages/` provides YAML and DidYouMean, which Spinel lacks.
 
 ## Building
 
@@ -28,7 +28,6 @@ K_EXECUTABLE=spinel/build/bin/k bundle exec rspec
 
 ## Differences from running k with Ruby
 
-- An unknown command gets no "Perhaps you meant" suggestions, DidYouMean isn't available
 - `k pg:proxy` still runs the Ruby `k_pg_proxy` script from the directory the k binary lives in
 
 ## Writing Spinel compatible k code
