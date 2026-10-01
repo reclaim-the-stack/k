@@ -6,11 +6,11 @@ The `k` script stays the source of truth and keeps running on CRuby as before. `
 
 ## Building
 
-Spinel is built from source. This was tested with Spinel master at `438241961` (2026-10-01), the `2026.09.12` release is too old.
+Spinel is built from source. This was tested with Spinel master at `c66837f9a` (2026-10-01), the `2026.09.12` release is too old.
 
 ```sh
 git clone https://github.com/matz/spinel && cd spinel
-git checkout 438241961cd7e9f0e1dc1cb81f261dd37cb9d756
+git checkout c66837f9a10e5b3bc85e7f480bfe32ccfb25dbec
 make deps && make
 sudo make install # or put the checkout's bin/ on your PATH
 
@@ -38,7 +38,6 @@ Spinel compiles a subset of Ruby, resolving every method call at compile time. I
 - Spinel resolves literal `require`s at compile time, even inside a discarded branch, so CRuby only libraries need `Kernel.send(:require, "name")`
 - No `send` with a computed method name, new commands must be added to the `COMMANDS` table
 - No `IO.popen` (use `Open3`), `Kernel#readline` (use `$stdin.readline`) or `Shellwords` (use `shell_escape`)
-- A method ending in a `system` call returns false under Spinel, assign the result and return that instead
 - `$?` is the raw wait status Integer rather than a `Process::Status`, use `last_exit_status`
 - `__FILE__` and `__dir__` name the source file at compile time, so don't use them to locate k or files beside it. Run another k command in process with `invoke_command` rather than running k again
 - Beware that some unsupported constructs compile into code raising `NoMethodError` at runtime rather than failing the build, so exercise changed commands with the compiled binary

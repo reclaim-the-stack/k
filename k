@@ -127,9 +127,7 @@ def kubectl(command, plugin: nil)
   require_plugin!(plugin) if plugin
   cmd = "kubectl #{plugin} --context #{KUBECTL_CONTEXT} #{command}"
   puts "debug: #{cmd}" if ENV["DEBUG"]
-  # Assigned since Spinel drops the result of system when it's the last expression of a method
-  success = system cmd # rubocop:disable Style/RedundantAssignment
-  success
+  system cmd
 end
 
 # Used to check for successful execution of kubectl commands without printing output
