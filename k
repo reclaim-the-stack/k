@@ -13,7 +13,9 @@ require "tmpdir"
 require "uri"
 
 if RUBY_ENGINE == "spinel"
-  require "did_you_mean" # preloaded by CRuby, vendored for Spinel in spinel/packages/did_you_mean
+  # Part of CRuby, vendored for Spinel in spinel/packages
+  require "did_you_mean"
+  require "kernel_exec"
 end
 
 # Older versions of YAML (ie. in Ruby 2.5) don't have unsafe_load
@@ -108,34 +110,6 @@ end
 
 def k_directory
   File.dirname(File.realpath(k_executable))
-end
-
-if RUBY_ENGINE == "spinel"
-  # Spinel has no process replacing Kernel#exec, so reach execl(3) directly
-  module SpinelExec
-    ffi_source <<~C
-      #include <stdio.h>
-      #include <unistd.h>
-
-      int k_exec_shell(const char *command) {
-        fflush(NULL);
-        execl("/bin/sh", "sh", "-c", command, (char *)NULL);
-        return -1;
-      }
-    C
-    ffi_func :k_exec_shell, [:str], :int
-  end
-end
-
-# Replace the k process with a shell command, like Kernel#exec
-def exec_command(command)
-  if RUBY_ENGINE == "spinel"
-    $stdout.flush
-    SpinelExec.k_exec_shell(command)
-    abort "Error: failed to execute #{command}"
-  else
-    exec command
-  end
 end
 
 # The exit status of the last child process like $?.exitstatus, nil if it was killed by a signal.
@@ -505,9 +479,9 @@ def clickhouse_cli
   query = ARGV.join(" ")
 
   if query.empty?
-    exec_command "kubectl --context #{KUBECTL_CONTEXT} exec -it #{pod} -c clickhouse -- clickhouse client"
+    exec "kubectl --context #{KUBECTL_CONTEXT} exec -it #{pod} -c clickhouse -- clickhouse client"
   else
-    exec_command "kubectl --context #{KUBECTL_CONTEXT} exec -it #{pod} -c clickhouse -- clickhouse client --format PrettyCompact --query \"#{query}\""
+    exec "kubectl --context #{KUBECTL_CONTEXT} exec -it #{pod} -c clickhouse -- clickhouse client --format PrettyCompact --query \"#{query}\""
   end
 end
 
@@ -844,7 +818,7 @@ def logs
   kail_arguments = deployment_names.map { |name| "-d #{name}" }.join(" ")
 
   puts "Tailing logs from #{deployment_names.join(', ')}..."
-  exec_command "#{kail_executable} --context #{KUBECTL_CONTEXT} #{kail_arguments}"
+  exec "#{kail_executable} --context #{KUBECTL_CONTEXT} #{kail_arguments}"
 end
 
 def logs_search
@@ -1864,7 +1838,7 @@ def config_edit
       selected_secret = shared_secrets[input - 2]
       puts "Editing shared secret: #{selected_secret}..."
       puts ""
-      exec_command "k secrets:edit #{selected_secret}"
+      exec "k secrets:edit #{selected_secret}"
     end
   end
 end
@@ -2551,7 +2525,7 @@ def sh
     end
 
   command = "sh -c 'which bash > /dev/null && bash || sh'"
-  exec_command "kubectl exec --context #{KUBECTL_CONTEXT} -it #{resource_type}/#{resource} -- #{command}"
+  exec "kubectl exec --context #{KUBECTL_CONTEXT} -it #{resource_type}/#{resource} -- #{command}"
 end
 
 def _exec
@@ -2559,7 +2533,7 @@ def _exec
   abort "Must pass name of deployment, eg. k exec <deployment>" unless deployment
   abort "Must pass a command to run, eg. k exec <deployment> <command>" if ARGV.empty?
 
-  exec_command "kubectl exec  --context #{KUBECTL_CONTEXT} -it deployments/#{deployment} -- #{ARGV.join(' ')}"
+  exec "kubectl exec  --context #{KUBECTL_CONTEXT} -it deployments/#{deployment} -- #{ARGV.join(' ')}"
 end
 
 def nodes
@@ -2650,7 +2624,7 @@ def playground
     '
   )
 
-  exec_command kubectl_command
+  exec kubectl_command
 end
 
 def generate
