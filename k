@@ -8,11 +8,6 @@
 # YQ_PATH - path to yq executable, defaults to "yq"
 # K_LISTEN_ON_ALL_INTERFACES - if set to "true", listen on 0.0.0.0 for local forwards
 
-unless RUBY_ENGINE == "spinel"
-  # To protect against YAML bug present in certain psych versions: https://github.com/ruby/psych/pull/695
-  # Called indirectly since Spinel resolves literal requires at compile time, before discarding this branch.
-  Kernel.send(:require, "date")
-end
 require "yaml"
 require "tmpdir"
 require "uri"
