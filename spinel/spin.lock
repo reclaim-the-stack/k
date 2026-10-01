@@ -8,6 +8,18 @@ path = "packages/did_you_mean"
 version = "0.1.0"
 path = "packages/kernel_exec"
 
+[lock.kernel_spawn]
+version = "0.1.0"
+path = "packages/kernel_spawn"
+
+[lock.openssl_crypto]
+version = "0.1.0"
+path = "packages/openssl_crypto"
+
+[lock.sigint_interrupt]
+version = "0.1.0"
+path = "packages/sigint_interrupt"
+
 [lock.yaml]
 version = "0.0.1"
 path = "packages/yaml"

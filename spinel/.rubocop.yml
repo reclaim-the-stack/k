@@ -1,0 +1,9 @@
+inherit_from: ../.rubocop.yml
+
+AllCops:
+  # Only ever run by Spinel, and by a recent CRuby when spin test compares against it
+  TargetRubyVersion: 3.4
+  Exclude:
+    - "build/**/*"
+    - "packages/*/build/**/*"
+    - "packages/*/vendor/**/*"

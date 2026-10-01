@@ -7,4 +7,7 @@ exclude = ["packages"] # the packages' C is compiled as dependencies, not as par
 [dependencies]
 did_you_mean = { path = "packages/did_you_mean" }
 kernel_exec = { path = "packages/kernel_exec" }
+kernel_spawn = { path = "packages/kernel_spawn" }
+openssl_crypto = { path = "packages/openssl_crypto" }
+sigint_interrupt = { path = "packages/sigint_interrupt" }
 yaml = { path = "packages/yaml" }

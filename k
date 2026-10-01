@@ -16,6 +16,9 @@ if RUBY_ENGINE == "spinel"
   # Part of CRuby, provided for Spinel by spinel/packages
   require "did_you_mean"
   require "kernel_exec"
+  require "kernel_spawn"
+  require "openssl_crypto"
+  require "sigint_interrupt"
 end
 
 # Older versions of YAML (ie. in Ruby 2.5) don't have unsafe_load
@@ -1009,7 +1012,9 @@ module PgProxy
   def self.run
     require "base64"
     require "json"
-    require "openssl"
+    # Spinel's openssl links libssl, so Spinel builds get OpenSSL's digests from spinel/packages/openssl_crypto.
+    # Called indirectly since Spinel resolves literal requires at compile time, before discarding this branch.
+    Kernel.send(:require, "openssl") unless RUBY_ENGINE == "spinel"
     require "securerandom"
     require "socket"
 
@@ -1068,7 +1073,7 @@ module PgProxy
 
     message = [0, 196608]
     message_size = 4 + 4
-    pack_string = "L>L>"
+    pack_string = +"L>L>"
     ["user", user, "database", database].each do |param|
       message << param
       message_size += param.size + 1
@@ -1206,14 +1211,16 @@ module PgProxy
 
   def self.forward(from_socket, to_socket)
     loop do
-      data = from_socket.recv(1024)
-      return if data.nil?
+      # readpartial rather than recv, which skips data already buffered by the reads during authentication
+      data = from_socket.readpartial(1024)
       return if data == "X\x00\x00\x00\x04" # Terminate message
 
-      to_socket.send(data, 0)
+      to_socket.write(data)
+    rescue EOFError
+      return
     rescue Errno::ECONNRESET, IOError => e
-      # `recv': stream closed in another thread (IOError)
-      # `recv': closed stream (IOError)
+      # `readpartial': stream closed in another thread (IOError)
+      # `readpartial': closed stream (IOError)
       puts e.message unless e.message[/closed in another thread/]
       return
     end
@@ -1243,6 +1250,9 @@ module PgProxy
   end
 
   def self.handle_connection(client_socket, connection_number)
+    # Set up front for the ensure below: Spinel reads an unassigned Integer as 0, and kill(0) signals the process group
+    port_forward_pid = nil
+
     params = parse_startup_message(client_socket)
     database = params.fetch("database")
 
