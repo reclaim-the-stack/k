@@ -38,6 +38,7 @@ Spinel compiles a subset of Ruby, resolving every method call at compile time. I
 - Spinel resolves literal `require`s at compile time, even inside a discarded branch, so CRuby only libraries need `Kernel.send(:require, "name")`
 - No `send` with a computed method name, new commands must be added to the `COMMANDS` table
 - No `IO.popen` (use `Open3`), `Kernel#readline` (use `$stdin.readline`) or `Shellwords` (use `shell_escape`)
+- A method ending in a `system` call returns false under Spinel, assign the result and return that instead
 - `$?` is the raw wait status Integer rather than a `Process::Status`, use `last_exit_status`
 - No `__FILE__` / `__dir__` for locating k itself, they name the source file at compile time, use `k_executable` / `k_directory`
 - Beware that some unsupported constructs compile into code raising `NoMethodError` at runtime rather than failing the build, so exercise changed commands with the compiled binary
