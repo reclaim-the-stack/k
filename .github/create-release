@@ -49,7 +49,7 @@ PLATFORMS.map do |platform, urls|
     system_or_die "wget -q -O - #{urls.fetch(:kail)} | tar xvz -C dist/k-#{platform}/vendor/kail"
     system_or_die "wget -q -O dist/k-#{platform}/vendor/yq/yq #{urls.fetch(:yq)}"
 
-    %w[k k_pg_proxy].each do |executable|
+    %w[k].each do |executable|
       cp executable, "dist/k-#{platform}/app/"
 
       # NOTE: We don't include windows support for now but if we do, we'll need a .bat executable in thé style of:
