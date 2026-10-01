@@ -443,9 +443,9 @@ def clickhouse_cli
   query = ARGV.join(" ")
 
   if query.empty?
-    exec "kubectl exec -it #{pod} -c clickhouse -- clickhouse client"
+    exec "kubectl --context #{KUBECTL_CONTEXT} exec -it #{pod} -c clickhouse -- clickhouse client"
   else
-    exec "kubectl exec -it #{pod} -c clickhouse -- clickhouse client --format PrettyCompact --query \"#{query}\""
+    exec "kubectl --context #{KUBECTL_CONTEXT} exec -it #{pod} -c clickhouse -- clickhouse client --format PrettyCompact --query \"#{query}\""
   end
 end
 
