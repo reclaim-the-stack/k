@@ -249,7 +249,6 @@ def print_commands
   puts "k dashboard <application>" + gray(" opens application dashboard in grafana")
   puts "k deploy <application>" + gray(" deploy docker image to an application (run from repo/branch you want to deploy)")
   puts "k elasticsearch:url <cluster-name>" + gray(" output the internal URL for an elasticsearch cluster")
-  puts "k env-to-secret <env-file> <secret-name>"
   puts "k generate" + gray(" list generate commands for creating / adding resources to applications")
   puts "k k <kubectl-arguments>" + gray(" run kubectl with the configured context applied")
   puts "k kibana <application>" + gray(" access kibana from an elastic search enabled application")
@@ -2269,43 +2268,6 @@ def playground
   )
 
   exec kubectl_command
-end
-
-def env_to_secret
-  env_path = ARGV.delete_at(0)
-  secret_name = ARGV.delete_at(0)
-  unless env_path && secret_name
-    puts "USAGE:"
-    puts "First create a .env file, eg. from Heroku:"
-    puts "heroku config -s -a <app> > app.env"
-    puts ""
-    puts "Now generate Kubernetes secrets / sealed secrets as desired:"
-    puts "k env-to-secret app.env <secret-name> | kubeseal --context #{KUBECTL_CONTEXT} -o yaml > applications/shared-secrets/<secret-name>.yaml"
-    exit
-  end
-  abort "Error: Could not locate an ENV file at '#{env_path}'" unless File.exist?(env_path)
-
-  require "dotenv"
-  require "psych"
-  require "base64"
-
-  data = Dotenv
-    .load(env_path)
-    .transform_values(&Base64.method(:strict_encode64))
-    .sort
-    .to_h
-
-  secret = {
-    "apiVersion" => "v1",
-    "kind" => "Secret",
-    "type" => "opaque",
-    "data" => data,
-    "metadata" => {
-      "name" => secret_name,
-    },
-  }
-
-  puts secret.to_yaml
 end
 
 def generate
