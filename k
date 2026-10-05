@@ -15,8 +15,6 @@ require "uri"
 if RUBY_ENGINE == "spinel"
   # Part of CRuby, provided for Spinel by spinel/packages
   require "did_you_mean"
-  require "kernel_exec"
-  require "kernel_spawn"
   require "openssl_crypto"
   require "sigint_interrupt"
 end
@@ -99,13 +97,6 @@ def bold(string)
   $stdout.tty? ? "\e[1m#{string}\e[22m" : string
 end
 
-# The exit status of the last child process like $?.exitstatus, nil if it was killed by a signal.
-# Decoded from the raw wait status since Spinel's $? is an Integer rather than a Process::Status.
-def last_exit_status
-  raw_status = $?.to_i
-  (raw_status & 0x7f).zero? ? raw_status >> 8 : nil
-end
-
 # Shell escaping as per Shellwords.escape, which isn't available in Spinel
 def shell_escape(string)
   string = string.to_s
@@ -114,7 +105,7 @@ def shell_escape(string)
   string.gsub(%r{[^A-Za-z0-9_\-.,:+/@\n]}, "\\\\\\&").gsub("\n", "'\n'")
 end
 
-VERIFIED_PLUGINS = [] # rubocop:disable Style/MutableConstant -- appended to, and Spinel mistypes Array.new
+VERIFIED_PLUGINS = Array.new
 def require_plugin!(plugin)
   return if VERIFIED_PLUGINS.include?(plugin)
 
@@ -1012,9 +1003,8 @@ module PgProxy
   def self.run
     require "base64"
     require "json"
-    # Spinel's openssl links libssl, so Spinel builds get OpenSSL's digests from spinel/packages/openssl_crypto.
-    # Called indirectly since Spinel resolves literal requires at compile time, before discarding this branch.
-    Kernel.send(:require, "openssl") unless RUBY_ENGINE == "spinel"
+    # Spinel's openssl links libssl, so Spinel builds get OpenSSL's digests from spinel/packages/openssl_crypto
+    require "openssl" unless RUBY_ENGINE == "spinel"
     require "securerandom"
     require "socket"
 
@@ -1211,11 +1201,11 @@ module PgProxy
 
   def self.forward(from_socket, to_socket)
     loop do
-      # readpartial rather than recv, which skips data already buffered by the reads during authentication
+      # readpartial rather than recv, which in Spinel raises Errno::EBADF rather than IOError when closed by the other thread
       data = from_socket.readpartial(1024)
       return if data == "X\x00\x00\x00\x04" # Terminate message
 
-      to_socket.write(data)
+      to_socket.send(data, 0)
     rescue EOFError
       return
     rescue Errno::ECONNRESET, IOError => e
@@ -1250,9 +1240,6 @@ module PgProxy
   end
 
   def self.handle_connection(client_socket, connection_number)
-    # Set up front for the ensure below: Spinel reads an unassigned Integer as 0, and kill(0) signals the process group
-    port_forward_pid = nil
-
     params = parse_startup_message(client_socket)
     database = params.fetch("database")
 
@@ -1695,7 +1682,7 @@ def run
     # Only allocate a TTY when we have one, allows running from scripts / CI without kubectl warnings
     tty_flag = $stdin.tty? ? "-it" : "-i"
     kubectl "exec #{pod_name} -c run #{tty_flag} -- sh -c #{shell_escape(command)}"
-    exit_status = last_exit_status || 1
+    exit_status = $?.exitstatus || 1
   rescue SignalException => e
     puts "", "Received SIG#{Signal.signame(e.signo)}, aborting..."
     exit_status = 128 + e.signo
@@ -2054,8 +2041,7 @@ def releases
     releases = lookup_latest_releases(application)
     abort "Error: No releases found for #{application}" if releases.empty?
 
-    # A block rather than &:subject, which Spinel fails to compile for these Structs
-    longest_subject = releases.map { |release| release.subject }.max_by(&:length) # rubocop:disable Style/SymbolProc
+    longest_subject = releases.map(&:subject).max_by(&:length)
 
     puts gray("=== ") + bold(application) + bold(" Releases")
     puts ""
@@ -2079,8 +2065,7 @@ def rollback
 
   in_argo_repo do
     releases = lookup_latest_releases(application)
-    # A block rather than &:subject, which Spinel fails to compile for these Structs
-    longest_subject = releases.map { |release| release.subject }.max_by(&:length) # rubocop:disable Style/SymbolProc
+    longest_subject = releases.map(&:subject).max_by(&:length)
 
     puts gray("=== ") + bold(application) + bold(" Rollback")
     puts ""

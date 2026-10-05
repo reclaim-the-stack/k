@@ -9,7 +9,7 @@
 # shadows the stdlib's yaml.rb, so hand over to the real Psych. Spinel drops the
 # branch before analysis.
 unless RUBY_ENGINE == "spinel"
-  Kernel.send(:require, "psych")   # not a literal `require`: spinel splices those at parse time, before this branch is pruned
+  require "psych"
   YAML = Psych
   return
 end

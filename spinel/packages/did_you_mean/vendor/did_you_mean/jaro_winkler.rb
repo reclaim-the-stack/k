@@ -71,7 +71,7 @@ module DidYouMean
         codepoints2  = str2.codepoints
         prefix_bonus = 0
 
-        str1.codepoints.each do |char1|
+        str1.each_codepoint do |char1|
           char1 == codepoints2[prefix_bonus] && prefix_bonus < 4 ? prefix_bonus += 1 : break
         end
 

@@ -4,14 +4,6 @@
 version = "2.0.0"
 path = "packages/did_you_mean"
 
-[lock.kernel_exec]
-version = "0.1.0"
-path = "packages/kernel_exec"
-
-[lock.kernel_spawn]
-version = "0.1.0"
-path = "packages/kernel_spawn"
-
 [lock.openssl_crypto]
 version = "0.1.0"
 path = "packages/openssl_crypto"

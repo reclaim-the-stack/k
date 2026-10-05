@@ -1,8 +1,7 @@
 # OpenSSL's Digest, HMAC and PKCS5 for SHA-256, over Spinel's built-in crypto, see README.md.
 
 unless RUBY_ENGINE == "spinel"
-  # Called indirectly since Spinel resolves literal requires at compile time, before discarding this branch
-  Kernel.send(:require, "openssl")
+  require "openssl"
   return
 end
 
