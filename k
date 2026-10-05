@@ -2263,7 +2263,7 @@ def secrets_edit
     abort "Error: no shared secret named '#{shared_secret}' found in repo" unless File.exist?(shared_secret_path)
 
     original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} --namespace #{namespace} -o yaml")
-    original_env = original_secret.fetch("data").transform_values(&Base64.method(:strict_decode64))
+    original_env = original_secret.fetch("data").transform_values { |value| Base64.strict_decode64(value) }
 
     # Write temporary file and launch editor
     tmp_file = "/#{Dir.tmpdir}/#{namespace_prefix(namespace)}#{shared_secret}.yaml"
@@ -2278,7 +2278,7 @@ def secrets_edit
       exit
     end
 
-    data = new_env.transform_values(&:to_s).transform_values(&Base64.method(:strict_encode64))
+    data = new_env.transform_values(&:to_s).transform_values { |value| Base64.strict_encode64(value) }
     original_secret["data"] = data
 
     File.write(tmp_file, original_secret.to_yaml)
@@ -2360,7 +2360,7 @@ def secrets_set
     require "base64"
 
     original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} --namespace #{namespace} -o yaml")
-    original_env = original_secret.fetch("data").transform_values(&Base64.method(:strict_decode64))
+    original_env = original_secret.fetch("data").transform_values { |value| Base64.strict_decode64(value) }
 
     new_env = original_env.merge(new_env)
 
@@ -2369,7 +2369,7 @@ def secrets_set
       exit
     end
 
-    data = new_env.transform_values(&:to_s).transform_values(&Base64.method(:strict_encode64))
+    data = new_env.transform_values(&:to_s).transform_values { |value| Base64.strict_encode64(value) }
     original_secret["data"] = data
 
     tmp_file = "/#{Dir.tmpdir}/#{shared_secret}.yaml"
@@ -2414,7 +2414,7 @@ def secrets_unset
     require "base64"
 
     original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} --namespace #{namespace} -o yaml")
-    original_env = original_secret.fetch("data").transform_values(&Base64.method(:strict_decode64))
+    original_env = original_secret.fetch("data").transform_values { |value| Base64.strict_decode64(value) }
 
     new_env = original_env.except(*keys)
 
@@ -2423,7 +2423,7 @@ def secrets_unset
       exit
     end
 
-    data = new_env.transform_values(&:to_s).transform_values(&Base64.method(:strict_encode64))
+    data = new_env.transform_values(&:to_s).transform_values { |value| Base64.strict_encode64(value) }
     original_secret["data"] = data
 
     tmp_file = "/#{Dir.tmpdir}/#{namespace_prefix(namespace)}#{shared_secret}.yaml"
@@ -2482,7 +2482,7 @@ def secrets_create
       abort "Error: No environment variables found, aborting secret creation."
     end
 
-    data = new_env.transform_values(&:to_s).transform_values(&Base64.method(:strict_encode64))
+    data = new_env.transform_values(&:to_s).transform_values { |value| Base64.strict_encode64(value) }
 
     secret_yaml = {
       "apiVersion" => "v1",

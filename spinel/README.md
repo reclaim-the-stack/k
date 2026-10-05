@@ -39,6 +39,7 @@ Spinel compiles a subset of Ruby, resolving every method call at compile time. I
 - No `send` with a computed method name, new commands must be added to the `COMMANDS` table
 - No `IO.popen` (use `Open3`), `Kernel#readline` (use `$stdin.readline`) or `Shellwords` (use `shell_escape`)
 - `$?` is the raw wait status Integer rather than a `Process::Status`, use `last_exit_status`
+- Pass a block rather than a method object, eg. `transform_values { |value| Base64.strict_decode64(value) }` rather than `transform_values(&Base64.method(:strict_decode64))`, which compiles into a NoMethodError
 - String literals are frozen, as with `# frozen_string_literal: true`, so build a string you append to with `+""` or interpolation
 - An Integer local read before it's assigned is 0 rather than nil, so assign nil up front where that matters, eg. for an `ensure`
 - A socket's `recv` skips data its `read` already buffered, use `readpartial` to read what's available
