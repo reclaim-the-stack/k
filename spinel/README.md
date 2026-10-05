@@ -2,7 +2,7 @@
 
 [Spinel](https://github.com/matz/spinel) compiles Ruby ahead of time into a native executable. Built this way `k` is a single ~2.5 MB binary depending on nothing but libc, starting in a few milliseconds instead of loading a Ruby interpreter.
 
-The `k` script stays the source of truth and keeps running on CRuby as before. `bin/k.rb` is a symlink to it, and `packages/` provides what k uses that Spinel lacks: YAML, DidYouMean, OpenSSL's SHA-256 digests without linking libssl, and SIGINT raising `Interrupt`.
+The `k` script stays the source of truth and keeps running on CRuby as before. `bin/k.rb` is a symlink to it, and `packages/` provides what k uses that Spinel lacks: YAML, DidYouMean, Shellwords, OpenSSL's SHA-256 digests without linking libssl, and SIGINT raising `Interrupt`.
 
 ## Building
 
@@ -36,7 +36,7 @@ Spinel compiles a subset of Ruby, resolving every method call at compile time. I
 
 - Branch on `RUBY_ENGINE == "spinel"` for code which can only work on one of the engines, Spinel discards the branch it rules out before compiling
 - No method reflection such as `private_methods`, so new commands must be added to the `COMMANDS` table
-- No `IO.popen` (use `Open3`), `Shellwords` (use `shell_escape`), `Time.parse` or `date`
+- No `IO.popen` (use `Open3`), `Time.parse` or `date`
 - A bare `readline` fails to compile in k, use `$stdin.readline`
 - Pass a block rather than a method object, eg. `transform_values { |value| Base64.strict_decode64(value) }` rather than `transform_values(&Base64.method(:strict_decode64))`
 - String literals are frozen, as with `# frozen_string_literal: true`, so build a string you append to with `+""` or interpolation

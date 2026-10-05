@@ -97,14 +97,6 @@ def bold(string)
   $stdout.tty? ? "\e[1m#{string}\e[22m" : string
 end
 
-# Shell escaping as per Shellwords.escape, which isn't available in Spinel
-def shell_escape(string)
-  string = string.to_s
-  return "''" if string.empty?
-
-  string.gsub(%r{[^A-Za-z0-9_\-.,:+/@\n]}, "\\\\\\&").gsub("\n", "'\n'")
-end
-
 VERIFIED_PLUGINS = Array.new
 def require_plugin!(plugin)
   return if VERIFIED_PLUGINS.include?(plugin)
@@ -1664,6 +1656,7 @@ def run
   }
 
   require "open3"
+  require "shellwords"
 
   puts "Creating pod #{pod_name}..."
   # Pipe the manifest via stdin rather than interpolating it into a shell command to avoid quoting issues
@@ -1681,7 +1674,7 @@ def run
     puts "Running #{command} on #{pod_name}..."
     # Only allocate a TTY when we have one, allows running from scripts / CI without kubectl warnings
     tty_flag = $stdin.tty? ? "-it" : "-i"
-    kubectl "exec #{pod_name} -c run #{tty_flag} -- sh -c #{shell_escape(command)}"
+    kubectl "exec #{pod_name} -c run #{tty_flag} -- sh -c #{Shellwords.escape(command)}"
     exit_status = $?.exitstatus || 1
   rescue SignalException => e
     puts "", "Received SIG#{Signal.signame(e.signo)}, aborting..."

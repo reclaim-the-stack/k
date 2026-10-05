@@ -8,6 +8,10 @@ path = "packages/did_you_mean"
 version = "0.1.0"
 path = "packages/openssl_crypto"
 
+[lock.shellwords]
+version = "0.2.2"
+path = "packages/shellwords"
+
 [lock.sigint_interrupt]
 version = "0.1.0"
 path = "packages/sigint_interrupt"
