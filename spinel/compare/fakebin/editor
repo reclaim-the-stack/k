@@ -1,0 +1,4 @@
+#!/bin/sh
+# The $EDITOR secrets:edit opens: changes one variable and adds another
+perl -pi -e 's/^PORT: .*/PORT: "4000"/' "$1"
+echo "NEW_VAR: added" >> "$1"

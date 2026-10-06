@@ -26,6 +26,15 @@ The spec suite runs against any k executable:
 K_EXECUTABLE=spinel/build/bin/k bundle exec rspec
 ```
 
+`compare/` runs k with CRuby and as a compiled executable side by side, and fails on any difference:
+
+```sh
+spinel/compare/commands.sh spinel/build/bin/k # some 30 commands against fake kubectl, kubeseal and git remotes
+spinel/compare/pg-proxy.sh spinel/build/bin/k # pg:proxy through psql to Postgres in Docker, needs socat
+```
+
+`commands.sh` compares stdout, stderr, exit status, written files, git commits and pushes and the kubectl calls made. Add a case there when changing a command. `.github/workflows/build-native.yaml` builds k for Linux and macOS and runs the specs and both comparisons against each build.
+
 ## Differences from running k with Ruby
 
 - An exception nothing rescues is reported without its backtrace

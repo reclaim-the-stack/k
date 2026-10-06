@@ -1,0 +1,6 @@
+#!/bin/sh
+# Prints the manifest given with -f instead of sealing it, so the comparison sees the secret's content
+while [ $# -gt 0 ]; do
+  [ "$1" = "-f" ] && cat "$2"
+  shift
+done
