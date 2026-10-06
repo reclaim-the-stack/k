@@ -24,7 +24,7 @@ on:
 
 env:
   # The Spinel revision k is tested with, see spinel/README.md
-  SPINEL_REVISION: b726ae0142852d34852d71021bea4971ede27190
+  SPINEL_REVISION: 64a7c13663cc5b2247240385b85813cec3fe3421
 
 jobs:
   pack:

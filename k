@@ -574,13 +574,13 @@ def contexts_add
 
   default_context_name = repository_name
   print "What would you like to name this context? [#{default_context_name}] "
-  context_name = $stdin.readline.strip
+  context_name = readline.strip
   context_name = default_context_name if context_name.empty?
 
   if K_CONFIG.fetch("contexts").key?(context_name)
     puts "A context named '#{context_name}' already exists"
     print "What would you like to name it instead?"
-    context_name = $stdin.readline.strip
+    context_name = readline.strip
   end
 
   abort "Error: context name cannot be blank" if context_name.empty?
@@ -590,11 +590,11 @@ def contexts_add
 
   default_registry = "docker.io"
   print "Which Docker registry should be used for this context? [#{default_registry}] "
-  registry = $stdin.readline.strip
+  registry = readline.strip
   registry = default_registry if registry.empty?
 
   print "Which Docker registry namespace should be used for this context? [#{github_organization}] "
-  registry_namespace = $stdin.readline.strip
+  registry_namespace = readline.strip
   registry_namespace = github_organization if registry_namespace.empty?
   puts ""
 
@@ -621,7 +621,7 @@ def contexts_add
   end
   default_context = current_kubectl_context.empty? ? kubectl_contexts.first : current_kubectl_context
   print "Which kubectl context should be used for this context? [#{default_context}] "
-  kubernetes_context = $stdin.readline.strip
+  kubernetes_context = readline.strip
   kubernetes_context = default_context if kubernetes_context.empty?
   puts ""
 
@@ -1194,16 +1194,14 @@ module PgProxy
 
   def self.forward(from_socket, to_socket)
     loop do
-      # readpartial rather than recv, which in Spinel raises Errno::EBADF rather than IOError when closed by the other thread
-      data = from_socket.readpartial(1024)
+      data = from_socket.recv(1024)
+      return if data.nil?
       return if data == "X\x00\x00\x00\x04" # Terminate message
 
       to_socket.send(data, 0)
-    rescue EOFError
-      return
     rescue Errno::ECONNRESET, IOError => e
-      # `readpartial': stream closed in another thread (IOError)
-      # `readpartial': closed stream (IOError)
+      # `recv': stream closed in another thread (IOError)
+      # `recv': closed stream (IOError)
       puts e.message unless e.message[/closed in another thread/]
       return
     end
@@ -1802,7 +1800,7 @@ def config_edit
     puts ""
 
     print "> "
-    input = $stdin.readline.to_i
+    input = readline.to_i
     puts ""
 
     case input
@@ -2080,7 +2078,7 @@ def rollback
 
     number_of_choices = releases.length - 1
     print "Which version would you like to rollback to [1-#{number_of_choices}]: "
-    index = $stdin.readline.to_i
+    index = readline.to_i
     selected_release = releases[index]
     abort "Error: Selection must be a number between 1 and #{number_of_choices}" unless index > 0 && selected_release
 
@@ -2088,7 +2086,7 @@ def rollback
     releases_to_undo = releases[0..index-1]
     puts "Note: This will undo the following previous releases: #{releases_to_undo.map(&:pretty_sha).join(' ')}"
     print "Confirm rollback to version #{bold(selected_release.pretty_sha)} [y/N] "
-    choice = $stdin.readline.chomp
+    choice = readline.chomp
     puts ""
 
     unless choice.upcase == "Y"
@@ -2700,7 +2698,7 @@ def generate_deployment
     deployment_types.each_with_index do |type, index|
       puts "#{index + 1}. #{type.capitalize}"
     end
-    selection = $stdin.readline.to_i
+    selection = readline.to_i
 
     abort "Error: invalid selection" unless (1..deployment_types.length).include?(selection)
     type = deployment_types[selection - 1]
@@ -2708,7 +2706,7 @@ def generate_deployment
 
   if type == "other"
     print "Please give the deployment a name: "
-    name = $stdin.readline.strip
+    name = readline.strip
     abort "Error: didn't provide a name" if name.empty?
     puts ""
   else
@@ -2717,7 +2715,7 @@ def generate_deployment
 
   if File.exist?("#{app_path}/templates/deployment-#{name}.yaml")
     print "A deployment named deployment-#{name} already exists for this application, please provide a suffix: "
-    suffix = $stdin.readline.strip.delete_prefix("-")
+    suffix = readline.strip.delete_prefix("-")
     puts
 
     abort "Error: didn't provide a suffix" if suffix.empty?
@@ -2832,7 +2830,7 @@ def generate_resource
     resource_types.each_with_index do |type, index|
       puts "#{index + 1}. #{type.capitalize}"
     end
-    selection = $stdin.readline.to_i
+    selection = readline.to_i
     puts
     abort "Error: invalid selection" unless (1..resource_types.length).include?(selection)
     type = resource_types[selection - 1]
@@ -2842,7 +2840,7 @@ def generate_resource
 
   if File.exist?("#{app_path}/templates/#{name}.yaml")
     print "A #{type} resource already exists for this application, please provide a suffix: "
-    suffix = $stdin.readline.strip.delete_prefix("-")
+    suffix = readline.strip.delete_prefix("-")
 
     abort "Error: didn't provide a suffix" if suffix.empty?
 
@@ -2968,7 +2966,7 @@ def node_failover
 
   puts
   puts "Do you want to failover these databases [y/N]"
-  choice = $stdin.readline.chomp
+  choice = readline.chomp
   unless choice.upcase == "Y"
     puts "Failover aborted!"
     exit
@@ -3032,7 +3030,7 @@ def node_purge_pvcs
   puts
   puts "Proceed with permanent deletion of these PVCs [y/N]"
 
-  choice = $stdin.readline.chomp
+  choice = readline.chomp
   unless choice.upcase == "Y"
     puts "PVC purge aborted!"
     exit

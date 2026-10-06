@@ -6,11 +6,11 @@ The `k` script stays the source of truth and keeps running on CRuby as before. `
 
 ## Building
 
-Spinel is built from source. This was tested with Spinel master at `b726ae014` (2026-10-05), the `2026.09.12` release is too old.
+Spinel is built from source. This was tested with Spinel master at `64a7c1366` (2026-10-06), the `2026.09.12` release is too old.
 
 ```sh
 git clone https://github.com/matz/spinel && cd spinel
-git checkout b726ae0142852d34852d71021bea4971ede27190
+git checkout 64a7c13663cc5b2247240385b85813cec3fe3421
 make deps && make
 sudo make install # or put the checkout's bin/ on your PATH
 
@@ -46,10 +46,7 @@ Spinel compiles a subset of Ruby, resolving every method call at compile time. I
 - Branch on `RUBY_ENGINE == "spinel"` for code which can only work on one of the engines, Spinel discards the branch it rules out before compiling
 - No method reflection such as `private_methods`, so new commands must be added to the `COMMANDS` table
 - No `IO.popen` (use `Open3`), `Time.parse` or `date`
-- A bare `readline` fails to compile in k, use `$stdin.readline`
-- Pass a block rather than a method object, eg. `transform_values { |value| Base64.strict_decode64(value) }` rather than `transform_values(&Base64.method(:strict_decode64))`
 - String literals are frozen, as with `# frozen_string_literal: true`, so build a string you append to with `+""` or interpolation
-- A socket's `recv` raises `Errno::EBADF` rather than `IOError` when another thread closes the socket, use `readpartial`
 - `require "openssl"` links libssl, which a self contained binary can't depend on. OpenSSL's digests come from `packages/openssl_crypto`, so k requires OpenSSL itself on CRuby only
 - `__FILE__` and `__dir__` name the source file at compile time, so don't use them to locate k or files beside it. Run another k command in process with `invoke_command` rather than running k again
 - Beware that some unsupported constructs compile into code raising `NoMethodError` at runtime rather than failing the build, so exercise changed commands with the compiled binary

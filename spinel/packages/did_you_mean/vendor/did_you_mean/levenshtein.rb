@@ -16,7 +16,7 @@ module DidYouMean
       # to avoid duplicating an enumerable object, create it outside of the loop
       str2_codepoints = str2.codepoints
 
-      str1.codepoints.each.with_index(1) do |char1, i|
+      str1.each_codepoint.with_index(1) do |char1, i|
         j = 0
         while j < m
           cost = (char1 == str2_codepoints[j]) ? 0 : 1
