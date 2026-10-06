@@ -1,0 +1,54 @@
+#!/bin/sh
+# A fake kubectl answering the calls commands.sh makes k do, logging each call (and manifests piped to it)
+
+log=${FAKE_KUBECTL_LOG:-/dev/null}
+echo "kubectl $*" >> "$log"
+args="$*"
+for last; do :; done
+
+case "$args" in
+  "config current-context") echo "none" ;;
+  "config get-contexts -o name") printf 'none\nnone-2\n' ;;
+
+  # secrets:edit, config:edit, config and config:get
+  *"get secret app-env "*"-o yaml"*)
+    printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: app-env\ndata:\n  API_KEY: %s\n  PORT: %s\n' \
+      "$(printf s3cret | base64)" "$(printf 3000 | base64)" ;;
+
+  # deploy, run and console. The deployment runs whatever image values.yaml names, so deploy sees its rollout.
+  *"get deployments -o yaml"*)
+    image=$(sed -n 's/^image: //p' applications/web-app/values.yaml 2>/dev/null)
+    printf 'items:\n- kind: Deployment\n  metadata:\n    name: web-app-web\n    labels:\n      argocd.argoproj.io/instance: web-app\n  spec:\n    template:\n      spec:\n        containers:\n        - name: web\n          image: %s\n        - name: sidecar\n          image: busybox\n' \
+      "${image:-ghcr.io/acme/web-app:v4}" ;;
+  *"get cronjobs -o yaml"*) echo "items: []" ;;
+  *"apply -f -"*) cat >> "$log"; echo >> "$log"; echo "pod/run-created" ;;
+  *"wait pod "*) exit 0 ;;
+  *" -c run "*" -- sh -c "*) exec sh -c "$last" ;;
+  *"delete pod "*) exit 0 ;;
+
+  # sh and exec
+  *"get pods/"*) exit 1 ;;
+  *"get deployments/"*) exit 0 ;;
+
+  # node:failover
+  "--context none get node node-1") echo "node/node-1" ;;
+  *"get pods --field-selector spec.nodeName=node-1 -o yaml"*)
+    printf 'items:\n'
+    for cluster in pg-a pg-bad pg-c; do
+      printf -- '- metadata:\n    name: %s-1\n    labels:\n      cnpg.io/instanceRole: primary\n      cnpg.io/cluster: %s\n' $cluster $cluster
+    done ;;
+  "cnpg --context none") exit 0 ;;
+  *"get cluster.postgresql.cnpg.io "*) echo "cluster.postgresql.cnpg.io/$(echo "$args" | sed -E 's/.*cnpg.io ([^ ]+) .*/\1/')" ;;
+  *"status -o yaml pg-bad"*) printf 'cluster:\n  status:\n    instancesReportedState:\n      pg-bad-1:\n        isPrimary: true\n' ;;
+  *"status -o yaml "*) printf 'cluster:\n  status:\n    instancesReportedState:\n      %s-1:\n        isPrimary: true\n      %s-2:\n        isPrimary: false\n' "$last" "$last" ;;
+  *"promote "*) echo "fake kubectl: $args" ;;
+
+  # clickhouse:table-size
+  *"get clickhouseinstallations "*) echo "clickhouseinstallation.clickhouse.altinity.com/$(echo "$args" | sed -E 's/.*clickhouseinstallations ([^ ]+) .*/\1/')" ;;
+  *"get pods -l clickhouse.altinity.com/chi=events -o name"*) printf 'pod/chi-events-0-1-0\npod/chi-events-0-0-0\n' ;;
+  *"get pods -l clickhouse.altinity.com/chi="*) ;;
+  "--context none exec chi-"*) echo "fake kubectl: $args" ;;
+
+  *"-o yaml"*) printf 'items:\n- metadata:\n    name: web-app-web\n    labels:\n      argocd.argoproj.io/instance: web-app\n' ;;
+  *) echo "fake kubectl: $args"; exit 7 ;;
+esac

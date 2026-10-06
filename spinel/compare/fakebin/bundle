@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stands in for the bundle k console runs in the pod
+echo "bundle $*"

@@ -8,10 +8,16 @@
 # YQ_PATH - path to yq executable, defaults to "yq"
 # K_LISTEN_ON_ALL_INTERFACES - if set to "true", listen on 0.0.0.0 for local forwards
 
-require "date" # to protect against YAML bug present in certain psych versions: https://github.com/ruby/psych/pull/695
 require "yaml"
 require "tmpdir"
 require "uri"
+
+if RUBY_ENGINE == "spinel"
+  # Part of CRuby, provided for Spinel by spinel/packages
+  require "did_you_mean"
+  require "openssl_crypto"
+  require "sigint_interrupt"
+end
 
 # Older versions of YAML (ie. in Ruby 2.5) don't have unsafe_load
 def yaml_load(string)
@@ -39,7 +45,9 @@ K_CONFIG = YAML.load_file(K_CONFIG_FILE)
 
 K_CONTEXT_NAME = (ENV["K_CONTEXT"] || K_CONFIG["context"]).freeze
 
-if (K_CONTEXT = K_CONFIG["contexts"][K_CONTEXT_NAME])
+K_CONTEXT = K_CONFIG["contexts"][K_CONTEXT_NAME]
+
+if K_CONTEXT
   ORGANIZATION = K_CONTEXT.fetch("github_organization").freeze
   GIT_HOST = K_CONTEXT.fetch("repository")[/[a-zA-Z]+.com/].freeze
   REPO_NAME = K_CONTEXT_NAME
@@ -281,8 +289,6 @@ def print_commands
   puts "k exec <deployment> <command>" + gray(" execute a command on a live deployment")
 end
 
-PRIVATE_METHODS_BEFORE_COMMANDS = private_methods.dup.freeze
-
 def applications
   in_argo_repo do
     applications = Dir.glob("applications/*/Chart.yaml").map { |path| path.split("/")[1] }
@@ -487,9 +493,10 @@ def clickhouse_table_size
       SQL
     end
 
-  require "open3"
-  stdout, _stderr, _status = Open3.capture3("#{__FILE__}", "clickhouse:cli", cluster, query).first
-  puts stdout
+  pod = ClickHouse.pods_by_name(cluster).min
+  abort "Error: no pods found for cluster '#{cluster}'" unless pod
+
+  puts read_kubectl(%(exec #{pod} -c clickhouse -- clickhouse client --format PrettyCompact --query "#{query}"))
 
   puts gray("Pass a table name as additional argument to zoom in on a specific table") unless table
 end
@@ -782,6 +789,7 @@ def logs
   kail_arguments = deployment_names.map { |name| "-d #{name}" }.join(" ")
 
   puts "Tailing logs from #{deployment_names.join(', ')}..."
+  $stdout.flush # exec drops what's still buffered when stdout isn't a terminal
   exec "#{kail_executable} --context #{KUBECTL_CONTEXT} #{kail_arguments}"
 end
 
@@ -988,7 +996,8 @@ module PgProxy
   def self.run
     require "base64"
     require "json"
-    require "openssl"
+    # Spinel's openssl links libssl, so Spinel builds get OpenSSL's digests from spinel/packages/openssl_crypto
+    require "openssl" unless RUBY_ENGINE == "spinel"
     require "securerandom"
     require "socket"
 
@@ -1047,7 +1056,7 @@ module PgProxy
 
     message = [0, 196608]
     message_size = 4 + 4
-    pack_string = "L>L>"
+    pack_string = +"L>L>"
     ["user", user, "database", database].each do |param|
       message << param
       message_size += param.size + 1
@@ -1645,12 +1654,17 @@ def run
     },
   }
 
+  require "open3"
   require "shellwords"
 
   puts "Creating pod #{pod_name}..."
   # Pipe the manifest via stdin rather than interpolating it into a shell command to avoid quoting issues
-  IO.popen(["kubectl", "--context", KUBECTL_CONTEXT, "apply", "-f", "-"], "w") { |io| io.write(pod_template.to_json) }
-  abort "failed to create pod" unless $?.success?
+  apply_output, apply_status = Open3.capture2(
+    "kubectl", "--context", KUBECTL_CONTEXT, "apply", "-f", "-",
+    stdin_data: pod_template.to_json
+  )
+  print apply_output
+  abort "failed to create pod" unless apply_status.success?
 
   begin
     abort "failed to start pod" unless kubectl("wait pod #{pod_name} --for=condition=ContainersReady --timeout=120s > /dev/null")
@@ -1676,7 +1690,7 @@ def console
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k console <application>" unless application
 
-  system %(#{__dir__}/k run #{application} "EAGER_LOAD=false IRB_USE_AUTOCOMPLETE=true bundle exec rails console")
+  invoke_command("run", application, "EAGER_LOAD=false IRB_USE_AUTOCOMPLETE=true bundle exec rails console")
 end
 
 def config
@@ -1798,7 +1812,7 @@ def config_edit
       selected_secret = shared_secrets[input - 2]
       puts "Editing shared secret: #{selected_secret}..."
       puts ""
-      exec "k secrets:edit #{selected_secret}"
+      invoke_command("secrets_edit", selected_secret)
     end
   end
 end
@@ -2015,8 +2029,6 @@ def releases
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k releases <application>" unless application
 
-  require "time"
-
   in_argo_repo do
     releases = lookup_latest_releases(application)
     abort "Error: No releases found for #{application}" if releases.empty?
@@ -2042,8 +2054,6 @@ end
 def rollback
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k rollback <application>" unless application
-
-  require "time"
 
   in_argo_repo do
     releases = lookup_latest_releases(application)
@@ -2230,7 +2240,7 @@ def secrets_edit
     abort "Error: no shared secret named '#{shared_secret}' found in repo" unless File.exist?(shared_secret_path)
 
     original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} --namespace #{namespace} -o yaml")
-    original_env = original_secret.fetch("data").transform_values(&Base64.method(:strict_decode64))
+    original_env = original_secret.fetch("data").transform_values { |value| Base64.strict_decode64(value) }
 
     # Write temporary file and launch editor
     tmp_file = "/#{Dir.tmpdir}/#{namespace_prefix(namespace)}#{shared_secret}.yaml"
@@ -2245,7 +2255,7 @@ def secrets_edit
       exit
     end
 
-    data = new_env.transform_values(&:to_s).transform_values(&Base64.method(:strict_encode64))
+    data = new_env.transform_values(&:to_s).transform_values { |value| Base64.strict_encode64(value) }
     original_secret["data"] = data
 
     File.write(tmp_file, original_secret.to_yaml)
@@ -2327,7 +2337,7 @@ def secrets_set
     require "base64"
 
     original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} --namespace #{namespace} -o yaml")
-    original_env = original_secret.fetch("data").transform_values(&Base64.method(:strict_decode64))
+    original_env = original_secret.fetch("data").transform_values { |value| Base64.strict_decode64(value) }
 
     new_env = original_env.merge(new_env)
 
@@ -2336,7 +2346,7 @@ def secrets_set
       exit
     end
 
-    data = new_env.transform_values(&:to_s).transform_values(&Base64.method(:strict_encode64))
+    data = new_env.transform_values(&:to_s).transform_values { |value| Base64.strict_encode64(value) }
     original_secret["data"] = data
 
     tmp_file = "/#{Dir.tmpdir}/#{shared_secret}.yaml"
@@ -2381,7 +2391,7 @@ def secrets_unset
     require "base64"
 
     original_secret = YAML.safe_load read_kubectl("get secret #{shared_secret} --namespace #{namespace} -o yaml")
-    original_env = original_secret.fetch("data").transform_values(&Base64.method(:strict_decode64))
+    original_env = original_secret.fetch("data").transform_values { |value| Base64.strict_decode64(value) }
 
     new_env = original_env.except(*keys)
 
@@ -2390,7 +2400,7 @@ def secrets_unset
       exit
     end
 
-    data = new_env.transform_values(&:to_s).transform_values(&Base64.method(:strict_encode64))
+    data = new_env.transform_values(&:to_s).transform_values { |value| Base64.strict_encode64(value) }
     original_secret["data"] = data
 
     tmp_file = "/#{Dir.tmpdir}/#{namespace_prefix(namespace)}#{shared_secret}.yaml"
@@ -2449,7 +2459,7 @@ def secrets_create
       abort "Error: No environment variables found, aborting secret creation."
     end
 
-    data = new_env.transform_values(&:to_s).transform_values(&Base64.method(:strict_encode64))
+    data = new_env.transform_values(&:to_s).transform_values { |value| Base64.strict_encode64(value) }
 
     secret_yaml = {
       "apiVersion" => "v1",
@@ -2593,9 +2603,12 @@ def generate
   sub_command = ARGV.delete_at(0)
 
   if sub_command
-    method = "generate_#{sub_command}"
-    abort "Error: no generator named '#{sub_command}'" unless private_methods.include?(method.to_sym)
-    send(method)
+    case sub_command
+    when "application" then generate_application
+    when "deployment" then generate_deployment
+    when "resource" then generate_resource
+    else abort "Error: no generator named '#{sub_command}'"
+    end
   else
     puts "Generator commands can help with creating Kubernetes resources and should be run from inside " \
          "your own clone of the gitops repository."
@@ -2959,8 +2972,6 @@ def node_failover
     exit
   end
 
-  k_executable = __FILE__
-
   primaries.each do |primary|
     labels = primary.fetch("metadata").fetch("labels")
 
@@ -2968,19 +2979,21 @@ def node_failover
       cluster_name = labels.fetch("cnpg.io/cluster")
       puts
       puts "Failing over CloudnativePG cluster #{cluster_name}..."
-      system "#{k_executable} pg:failover #{cluster_name}"
+      invoke_command("pg_failover", cluster_name)
     elsif labels.key?("redisfailovers-role")
       cluster_name = labels.fetch("redisfailovers.databases.spotahome.com/name")
       puts
       puts "Failing over Spotahome Redis cluster #{cluster_name}..."
       k_compatible_name = cluster_name.delete_suffix("-redis")
-      system "#{k_executable} redis:failover #{k_compatible_name}"
+      invoke_command("redis_failover", k_compatible_name)
     elsif labels.key?("redis.reclaim-the-stack.com/role")
       cluster_name = labels.fetch("redis.reclaim-the-stack.com/cluster")
       puts
       puts "Failing over Reclaim the Stack Redis cluster #{cluster_name}..."
-      system "#{k_executable} redis:failover #{cluster_name}"
+      invoke_command("redis_failover", cluster_name)
     end
+  rescue SystemExit
+    next # a failover aborting doesn't stop the others
   end
 end
 
@@ -3106,7 +3119,8 @@ def opensearch_dashboards
     if system "which pbcopy > /dev/null 2>&1"
       puts "Storing dashboards password in clipboard..."
       puts
-      IO.popen("pbcopy", "w") { |clipboard| clipboard.write(password) }
+      require "open3"
+      Open3.capture2("pbcopy", stdin_data: password)
       puts "Login with username 'admin' and paste the password from your clipboard"
     else
       puts "Login with username 'admin' and paste the password '#{password}'"
@@ -3146,7 +3160,7 @@ def opensearch_overview
     when "yellow" then yellow("Yellow")
     when "red" then red("Red")
     else
-      cluster_health["status"] ? cluster_health["status"].to_s.capitalize : "Unknown"
+      cluster_stats["status"] ? cluster_stats["status"].to_s.capitalize : "Unknown"
     end
 
   format_number = lambda do |value|
@@ -3417,7 +3431,84 @@ def update
   system "brew reinstall k"
 end
 
-PRIVATE_METHODS_AFTER_COMMANDS = private_methods - PRIVATE_METHODS_BEFORE_COMMANDS
+# Every k command, keyed by method name. Dispatching through an explicit table rather than #send
+# lets k be compiled ahead of time by Spinel, which needs every call to be known at compile time.
+COMMANDS = {
+  "applications" => -> { applications },
+  "apps" => -> { apps },
+  "build_and_push" => -> { build_and_push },
+  "clickhouse" => -> { clickhouse },
+  "clickhouse_cli" => -> { clickhouse_cli },
+  "clickhouse_table_size" => -> { clickhouse_table_size },
+  "contexts" => -> { contexts },
+  "contexts_add" => -> { contexts_add },
+  "contexts_remove" => -> { contexts_remove },
+  "contexts_use" => -> { contexts_use },
+  "kibana" => -> { kibana },
+  "config_set" => -> { config_set },
+  "cnpg" => -> { cnpg },
+  "dashboard" => -> { dashboard },
+  "k" => -> { k },
+  "logs" => -> { logs },
+  "logs_search" => -> { logs_search },
+  "pg" => -> { pg },
+  "pg_failover" => -> { pg_failover },
+  "pg_password" => -> { pg_password },
+  "pg_pods" => -> { pg_pods },
+  "pg_primaries" => -> { pg_primaries },
+  "pg_proxy" => -> { pg_proxy },
+  "pg_psql" => -> { pg_psql },
+  "pg_resources" => -> { pg_resources },
+  "pg_url" => -> { pg_url },
+  "pg_bloat" => -> { pg_bloat },
+  "pg_cache" => -> { pg_cache },
+  "pg_index_usage" => -> { pg_index_usage },
+  "pg_seq_scans" => -> { pg_seq_scans },
+  "pg_table_size" => -> { pg_table_size },
+  "pg_unused_indexes" => -> { pg_unused_indexes },
+  "run" => -> { run },
+  "console" => -> { console },
+  "config" => -> { config },
+  "config_edit" => -> { config_edit },
+  "config_get" => -> { config_get },
+  "deploy" => -> { deploy },
+  "elasticsearch_url" => -> { elasticsearch_url },
+  "env_edit" => -> { env_edit },
+  "releases" => -> { releases },
+  "rollback" => -> { rollback },
+  "scale" => -> { scale },
+  "secrets" => -> { secrets },
+  "secrets_edit" => -> { secrets_edit },
+  "secrets_get" => -> { secrets_get },
+  "secrets_set" => -> { secrets_set },
+  "secrets_unset" => -> { secrets_unset },
+  "secrets_create" => -> { secrets_create },
+  "sh" => -> { sh },
+  "_exec" => -> { _exec },
+  "nodes" => -> { nodes },
+  "verify" => -> { verify },
+  "playground" => -> { playground },
+  "generate" => -> { generate },
+  "generate_application" => -> { generate_application },
+  "generate_deployment" => -> { generate_deployment },
+  "generate_resource" => -> { generate_resource },
+  "node_pvcs" => -> { node_pvcs },
+  "node_failover" => -> { node_failover },
+  "node_purge_pvcs" => -> { node_purge_pvcs },
+  "opensearch_url" => -> { opensearch_url },
+  "opensearch_dashboards" => -> { opensearch_dashboards },
+  "opensearch_dashboard" => -> { opensearch_dashboard },
+  "opensearch_overview" => -> { opensearch_overview },
+  "restart" => -> { restart },
+  "redis" => -> { redis },
+  "redis_cli" => -> { redis_cli },
+  "redis_sentinel_cli" => -> { redis_sentinel_cli },
+  "redis_failover" => -> { redis_failover },
+  "redis_primaries" => -> { redis_primaries },
+  "redis_url" => -> { redis_url },
+  "redis_sentinel_url" => -> { redis_sentinel_url },
+  "update" => -> { update },
+}.freeze
 
 def namespace_prefix(namespace)
   namespace == "default" ? "" : "#{namespace}__"
@@ -3466,7 +3557,7 @@ def lookup_latest_releases(application)
   git_log = `
     git log \
       -n 15 \
-      --pretty=format:'%H<col>%aN<col>%aD<col>%ar<col>%s<col>%b<row>' \
+      --pretty=format:'%H<col>%aN<col>%at<col>%ar<col>%s<col>%b<row>' \
       --follow -- applications/#{application}/values.yaml
   `
   release_struct = Struct.new(:sha, :pretty_sha, :author, :time, :relative_time, :subject, :body)
@@ -3478,7 +3569,7 @@ def lookup_latest_releases(application)
       sha,
       sha[0..10],
       author,
-      Time.parse(time).getlocal,
+      Time.at(time.to_i),
       relative_time,
       subject.delete_prefix("#{application}: "),
       body,
@@ -3499,22 +3590,28 @@ end
 
 # rubocop:enable Style/StringConcatenation
 
+# Runs another k command in this process, as if k had been invoked with it and `arguments`
+def invoke_command(name, *arguments)
+  ARGV.replace(arguments)
+  COMMANDS.fetch(name).call
+end
+
 def dispatch(command)
   command = "_exec" if command == "exec"
   method = command.split(/[:-]/).join("_")
 
-  send method
-rescue NoMethodError => e
-  # If the NoMethodError happened inside of the actual command we want to raise it
-  raise unless e.name.to_s == method.to_s
+  handler = COMMANDS[method]
+  unless handler
+    puts "Error: no command called '#{command}'"
+    puts ""
+    did_you_mean = DidYouMean::SpellChecker.new(dictionary: COMMANDS.keys)
+      .correct(method)
+      .map { |suggestion| "'#{suggestion.split('_').join(':')}'" }
+    puts "Perhaps you meant #{did_you_mean.join(' or ')}?" unless did_you_mean.empty?
+    exit 1
+  end
 
-  did_you_mean = DidYouMean::SpellChecker.new(dictionary: PRIVATE_METHODS_AFTER_COMMANDS)
-    .correct(method)
-    .map { |suggestion| "'#{suggestion.to_s.split('_').join(':')}'" }
-  puts "Error: no command called '#{command}'"
-  puts ""
-  puts "Perhaps you meant #{did_you_mean.join(' or ')}?" unless did_you_mean.empty?
-  exit 1 # using 'abort' somehow automatically prints the Exception
+  handler.call
 rescue Interrupt
   exit
 end

@@ -1,0 +1,22 @@
+#!/bin/sh
+# A fake kubectl for pg-proxy.sh: one CloudNativePG cluster, app-db, whose port-forward reaches the
+# Postgres container on $POSTGRES_PORT
+
+echo "kubectl $*" >> "${FAKE_KUBECTL_LOG:-/dev/null}"
+args="$*"
+
+case "$args" in
+  "--context none get cluster.postgresql.cnpg.io app-db -o name --ignore-not-found") echo "cluster.postgresql.cnpg.io/app-db" ;;
+  "--context none get cluster.postgresql.cnpg.io "*" -o name --ignore-not-found") ;;
+  "--context none get cluster.postgresql.cnpg.io -l argocd.argoproj.io/instance="*" -o name") ;;
+  "--context none get pod -o name -l cnpg.io/cluster==app-db,cnpg.io/instanceRole=primary") echo "pod/app-db-1" ;;
+  "--context none port-forward pod/app-db-1 "*":5432"*)
+    port=${args#*pod/app-db-1 }
+    port=${port%%:5432*}
+    exec socat "TCP-LISTEN:$port,bind=127.0.0.1,reuseaddr,fork" "TCP:127.0.0.1:$POSTGRES_PORT" ;;
+  "--context none get cluster.postgresql.cnpg.io app-db -o json") echo '{"kind": "Cluster", "metadata": {"name": "app-db"}}' ;;
+  "--context none get secret app-db-app -o json")
+    printf '{"data": {"user": "%s", "dbname": "%s", "password": "%s"}}' \
+      "$(printf app | base64)" "$(printf app | base64)" "$(printf s3cret | base64)" ;;
+  *) echo "fake kubectl (unhandled): $args" >&2; exit 1 ;;
+esac

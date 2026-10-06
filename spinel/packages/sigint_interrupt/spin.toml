@@ -1,0 +1,3 @@
+[package]
+name = "sigint_interrupt"
+version = "0.1.0"

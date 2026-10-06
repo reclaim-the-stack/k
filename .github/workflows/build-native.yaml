@@ -1,0 +1,164 @@
+name: Build native k
+
+# Compiles k with Spinel into a self-contained executable per platform.
+#
+# Spinel only runs in the first job: `spin pack` turns k into plain C (the generated program, Spinel's
+# runtime and the packages' native code) with a Makefile, which every platform then builds with nothing
+# but a C compiler. Linux builds are statically linked against musl, so they run on any distribution.
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - k
+      - spinel/**
+      - .github/workflows/build-native.yaml
+  pull_request:
+    paths:
+      - k
+      - spinel/**
+      - .github/workflows/build-native.yaml
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  # The Spinel revision k is tested with, see spinel/README.md
+  SPINEL_REVISION: 64a7c13663cc5b2247240385b85813cec3fe3421
+
+jobs:
+  pack:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore Spinel
+        id: spinel-cache
+        uses: actions/cache@v4
+        with:
+          path: spinel-toolchain
+          key: spinel-${{ runner.os }}-${{ runner.arch }}-${{ env.SPINEL_REVISION }}
+
+      - name: Build Spinel
+        if: steps.spinel-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --filter=blob:none https://github.com/matz/spinel spinel-toolchain
+          cd spinel-toolchain
+          git checkout --quiet "$SPINEL_REVISION"
+          make deps
+          make -j"$(nproc)"
+
+      - run: echo "$GITHUB_WORKSPACE/spinel-toolchain/bin" >> "$GITHUB_PATH"
+
+      # spin test compares each package's tests against CRuby
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+
+      - name: Test packages
+        run: |
+          for package in spinel/packages/*/; do
+            (cd "$package" && spin test)
+          done
+
+      - name: Pack
+        run: |
+          cd spinel
+          spin pack --out "$GITHUB_WORKSPACE/pack/k"
+          # spin pack carries a package's headers but not C files its sources #include, which is how the
+          # yaml package compiles libyaml
+          cp packages/yaml/vendor/libyaml/src/*.c "$GITHUB_WORKSPACE/pack/k/native/yaml/vendor/libyaml/src/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: k-pack
+          path: pack/k
+
+  build:
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runner: ubuntu-24.04
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+          - platform: darwin-amd64
+            runner: macos-15-intel
+          - platform: darwin-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: k-pack
+          path: pack
+
+      # GCC 14 rejects a pointer/integer mismatch Spinel generates for `abort` inside an if expression,
+      # which clang and older GCCs only warn about
+      - name: Build (static, musl)
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm --volume "$PWD/pack:/pack" --workdir /pack alpine:3.22 sh -c '
+            apk add --quiet build-base &&
+            make -j"$(nproc)" CC="gcc -Wno-error=int-conversion" LIBS="-static -lm -lpthread" &&
+            strip k
+          '
+
+      - name: Build
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
+        run: |
+          make -C pack -j"$(sysctl -n hw.ncpu)"
+          strip pack/k
+
+      - name: Inspect
+        run: |
+          ls -l pack/k
+          file pack/k
+          if [ "$RUNNER_OS" = macOS ]; then otool -L pack/k; else ! ldd pack/k; fi
+
+      # The specs and the comparisons run k as a subprocess, with CRuby and as the compiled executable
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+
+      # Gemfile.lock only lists macOS platforms, and rspec is all the specs need
+      - name: Specs
+        run: |
+          gem install rspec --no-document
+          K_EXECUTABLE=pack/k rspec
+
+      - name: Install comparison tools
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq socat postgresql-client > /dev/null
+          fi
+          if ! command -v yq > /dev/null; then
+            if [ "$RUNNER_OS" = macOS ]; then
+              brew install yq
+            else
+              sudo curl -sSLo /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_${{ endsWith(matrix.platform, 'arm64') && 'arm64' || 'amd64' }}"
+              sudo chmod +x /usr/local/bin/yq
+            fi
+          fi
+
+      - name: Compare commands with CRuby
+        run: spinel/compare/commands.sh pack/k
+
+      # Needs Docker, which only the Linux runners have
+      - name: Compare pg:proxy with CRuby
+        if: runner.os == 'Linux'
+        run: spinel/compare/pg-proxy.sh pack/k
+
+      - run: mv pack/k k-${{ matrix.platform }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: k-${{ matrix.platform }}
+          path: k-${{ matrix.platform }}
