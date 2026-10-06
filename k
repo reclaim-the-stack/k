@@ -789,6 +789,7 @@ def logs
   kail_arguments = deployment_names.map { |name| "-d #{name}" }.join(" ")
 
   puts "Tailing logs from #{deployment_names.join(', ')}..."
+  $stdout.flush # exec drops what's still buffered when stdout isn't a terminal
   exec "#{kail_executable} --context #{KUBECTL_CONTEXT} #{kail_arguments}"
 end
 
@@ -1813,7 +1814,7 @@ def config_edit
       selected_secret = shared_secrets[input - 2]
       puts "Editing shared secret: #{selected_secret}..."
       puts ""
-      exec "k secrets:edit #{selected_secret}"
+      invoke_command("secrets_edit", selected_secret)
     end
   end
 end
