@@ -1887,6 +1887,13 @@ def deploy
     abort "Error: couldn't fetch git commit meta-data, not in a git directory?"
   end
 
+  # The commit author is whoever wrote the deployed commit, so record who deployed it and from which branch
+  deployed_by = ENV["GITHUB_ACTOR"] || `git config user.name`.chomp
+  branch = ENV["GITHUB_REF_TYPE"] == "branch" ? ENV["GITHUB_REF_NAME"] : `git rev-parse --abbrev-ref HEAD`.chomp
+  branch = "" if branch == "HEAD" # detached HEAD
+  trailers = { "Deployed-By" => deployed_by, "Branch" => branch }.reject { |_, value| value.to_s.empty? }
+  trailers = trailers.map { |key, value| "#{key}: #{value}" }.join("\n")
+
   in_argo_repo do
     chart_yaml_path = "applications/#{application}/Chart.yaml"
     abort "Error: couldn't find app chart at #{INTERNAL_REPO_PATH}/#{chart_yaml_path}" unless File.exist?(chart_yaml_path)
@@ -1938,6 +1945,8 @@ def deploy
 #{application}: Deploy "#{commit_subject}"
 
 GitHub link: https://#{GIT_HOST}/#{ORGANIZATION}/#{repository}/commit/#{git_sha}
+
+#{trailers}
 EOF)
 
     safe_git_push
@@ -2022,10 +2031,11 @@ def releases
     abort "Error: No releases found for #{application}" if releases.empty?
 
     longest_subject = releases.map(&:subject).max_by(&:length)
+    longest_author = releases.map(&:author).max_by(&:length)
 
     puts gray("=== ") + bold(application) + bold(" Releases")
     puts ""
-    puts gray("Version".ljust(13) + "Time".ljust(21) + "Subject".ljust(longest_subject.length + 2) + "Author")
+    puts gray("Version".ljust(13) + "Time".ljust(21) + "Subject".ljust(longest_subject.length + 2) + "Author".ljust(longest_author.length + 2) + "Deployed by")
     today = Time.now.strftime("%Y-%m-%d")
     releases.each do |release|
       time_to_show =
@@ -2034,7 +2044,8 @@ def releases
         else
           release.time.strftime("%Y-%m-%d %H:%M:%S")
         end
-      puts "#{bold(release.pretty_sha)}  #{green(time_to_show)}  #{release.subject.ljust(longest_subject.length)}  #{cyan(release.author)}"
+      deployed_by = [release.deployed_by, release.branch && "(#{release.branch})"].compact.join(" ")
+      puts "#{bold(release.pretty_sha)}  #{green(time_to_show)}  #{release.subject.ljust(longest_subject.length)}  #{cyan(release.author.ljust(longest_author.length))}  #{deployed_by}"
     end
   end
 end
@@ -3469,7 +3480,7 @@ def lookup_latest_releases(application)
       --pretty=format:'%H<col>%aN<col>%aD<col>%ar<col>%s<col>%b<row>' \
       --follow -- applications/#{application}/values.yaml
   `
-  release_struct = Struct.new(:sha, :pretty_sha, :author, :time, :relative_time, :subject, :body)
+  release_struct = Struct.new(:sha, :pretty_sha, :author, :time, :relative_time, :subject, :body, :deployed_by, :branch)
 
   git_log.split("<row>").map do |row|
     sha, author, time, relative_time, subject, body = row.strip.split("<col>")
@@ -3482,6 +3493,8 @@ def lookup_latest_releases(application)
       relative_time,
       subject.delete_prefix("#{application}: "),
       body,
+      body.to_s[/^Deployed-By: (.+)$/, 1],
+      body.to_s[/^Branch: (.+)$/, 1],
     )
   end
 end
