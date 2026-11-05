@@ -1887,7 +1887,6 @@ def deploy
     abort "Error: couldn't fetch git commit meta-data, not in a git directory?"
   end
 
-  # The commit author is whoever wrote the deployed commit, so record who deployed it and from which branch
   deployed_by = ENV["GITHUB_ACTOR"].to_s.empty? ? `git config user.name`.chomp : ENV["GITHUB_ACTOR"]
   branch =
     if !ENV["GITHUB_HEAD_REF"].to_s.empty?
