@@ -263,6 +263,7 @@ def print_commands
   puts "k pg" + gray(" list postgres related commands")
   puts "k redis" + gray(" list redis related commands")
   puts "k releases <application>" + gray(" lists the past 15 releases for an application")
+  puts "k releases -v <application>" + gray(" also shows who deployed each release and from which branch")
   puts "k restart <application>" + gray(" restart application deployments")
   puts "k rollback <application>" + gray(" show prompt to rollback an application")
   puts "k run <application> <command>" + gray(" run a command using a one off pod")
@@ -2028,6 +2029,7 @@ def env_edit
 end
 
 def releases
+  verbose = ARGV.delete("-v") || ARGV.delete("--verbose")
   application = ARGV.delete_at(0)
   abort "Must pass name of application, eg. k releases <application>" unless application
 
@@ -2039,10 +2041,13 @@ def releases
 
     longest_subject = releases.map(&:subject).max_by(&:length)
     author_width = [*releases.map { |release| release.author.length }, "Author".length].max
+    deployed_by_width = [*releases.map { |release| release.deployed_by.length }, "Deployed by".length].max
 
     puts gray("=== ") + bold(application) + bold(" Releases")
     puts ""
-    puts gray("Version".ljust(13) + "Time".ljust(21) + "Subject".ljust(longest_subject.length + 2) + "Author".ljust(author_width + 2) + "Deployed by")
+    header = "Version".ljust(13) + "Time".ljust(21) + "Subject".ljust(longest_subject.length + 2)
+    header += verbose ? "Author".ljust(author_width + 2) + "Deployed by".ljust(deployed_by_width + 2) + "Branch" : "Author"
+    puts gray(header)
     today = Time.now.strftime("%Y-%m-%d")
     releases.each do |release|
       time_to_show =
@@ -2051,8 +2056,10 @@ def releases
         else
           release.time.strftime("%Y-%m-%d %H:%M:%S")
         end
-      deployed_by = [release.deployed_by, ("(#{release.branch})" unless release.branch.empty?)].compact.join(" ")
-      puts "#{bold(release.pretty_sha)}  #{green(time_to_show)}  #{release.subject.ljust(longest_subject.length)}  #{cyan(release.author.ljust(author_width))}  #{deployed_by}"
+      author = verbose ? release.author.ljust(author_width) : release.author
+      line = "#{bold(release.pretty_sha)}  #{green(time_to_show)}  #{release.subject.ljust(longest_subject.length)}  #{cyan(author)}"
+      line += "  #{release.deployed_by.ljust(deployed_by_width)}  #{release.branch}" if verbose
+      puts line.rstrip
     end
   end
 end
