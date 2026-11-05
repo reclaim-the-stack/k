@@ -1888,11 +1888,18 @@ def deploy
   end
 
   # The commit author is whoever wrote the deployed commit, so record who deployed it and from which branch
-  deployed_by = ENV["GITHUB_ACTOR"] || `git config user.name`.chomp
-  branch = ENV["GITHUB_REF_TYPE"] == "branch" ? ENV["GITHUB_REF_NAME"] : `git rev-parse --abbrev-ref HEAD`.chomp
-  branch = "" if branch == "HEAD" # detached HEAD
-  trailers = { "Deployed-By" => deployed_by, "Branch" => branch }.reject { |_, value| value.to_s.empty? }
-  trailers = trailers.map { |key, value| "#{key}: #{value}" }.join("\n")
+  deployed_by = ENV["GITHUB_ACTOR"].to_s.empty? ? `git config user.name`.chomp : ENV["GITHUB_ACTOR"]
+  branch =
+    if !ENV["GITHUB_HEAD_REF"].to_s.empty?
+      ENV["GITHUB_HEAD_REF"]
+    elsif ENV["GITHUB_REF_TYPE"] == "branch"
+      ENV["GITHUB_REF_NAME"]
+    else
+      `git branch --show-current`.chomp 
+    end
+  trailers = { "Deployed-By" => deployed_by, "Branch" => branch }
+    .filter_map { |key, value| "#{key}: #{value}" unless value.empty? }
+    .join("\n")
 
   in_argo_repo do
     chart_yaml_path = "applications/#{application}/Chart.yaml"
@@ -1940,7 +1947,7 @@ def deploy
     end
 
     repository = image.split("/").last.split(":").first
-    system_or_die %(git commit --author="#{commit_author} <#{commit_email}>" -a -F - <<EOF
+    system_or_die %(git commit --author="#{commit_author} <#{commit_email}>" -a -F - <<'EOF'
 
 #{application}: Deploy "#{commit_subject}"
 
@@ -2031,11 +2038,11 @@ def releases
     abort "Error: No releases found for #{application}" if releases.empty?
 
     longest_subject = releases.map(&:subject).max_by(&:length)
-    longest_author = releases.map(&:author).max_by(&:length)
+    author_width = [*releases.map { |release| release.author.length }, "Author".length].max
 
     puts gray("=== ") + bold(application) + bold(" Releases")
     puts ""
-    puts gray("Version".ljust(13) + "Time".ljust(21) + "Subject".ljust(longest_subject.length + 2) + "Author".ljust(longest_author.length + 2) + "Deployed by")
+    puts gray("Version".ljust(13) + "Time".ljust(21) + "Subject".ljust(longest_subject.length + 2) + "Author".ljust(author_width + 2) + "Deployed by")
     today = Time.now.strftime("%Y-%m-%d")
     releases.each do |release|
       time_to_show =
@@ -2044,8 +2051,8 @@ def releases
         else
           release.time.strftime("%Y-%m-%d %H:%M:%S")
         end
-      deployed_by = [release.deployed_by, release.branch && "(#{release.branch})"].compact.join(" ")
-      puts "#{bold(release.pretty_sha)}  #{green(time_to_show)}  #{release.subject.ljust(longest_subject.length)}  #{cyan(release.author.ljust(longest_author.length))}  #{deployed_by}"
+      deployed_by = [release.deployed_by, ("(#{release.branch})" unless release.branch.empty?)].compact.join(" ")
+      puts "#{bold(release.pretty_sha)}  #{green(time_to_show)}  #{release.subject.ljust(longest_subject.length)}  #{cyan(release.author.ljust(author_width))}  #{deployed_by}"
     end
   end
 end
@@ -3477,13 +3484,13 @@ def lookup_latest_releases(application)
   git_log = `
     git log \
       -n 15 \
-      --pretty=format:'%H<col>%aN<col>%aD<col>%ar<col>%s<col>%b<row>' \
+      --pretty=format:'%H<col>%aN<col>%aD<col>%ar<col>%s<col>%b<col>%(trailers:key=Deployed-By,valueonly)<col>%(trailers:key=Branch,valueonly)<row>' \
       --follow -- applications/#{application}/values.yaml
   `
   release_struct = Struct.new(:sha, :pretty_sha, :author, :time, :relative_time, :subject, :body, :deployed_by, :branch)
 
   git_log.split("<row>").map do |row|
-    sha, author, time, relative_time, subject, body = row.strip.split("<col>")
+    sha, author, time, relative_time, subject, body, deployed_by, branch = row.strip.split("<col>")
 
     release_struct.new(
       sha,
@@ -3493,8 +3500,8 @@ def lookup_latest_releases(application)
       relative_time,
       subject.delete_prefix("#{application}: "),
       body,
-      body.to_s[/^Deployed-By: (.+)$/, 1],
-      body.to_s[/^Branch: (.+)$/, 1],
+      deployed_by.to_s.strip,
+      branch.to_s.strip,
     )
   end
 end
