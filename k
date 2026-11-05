@@ -1887,6 +1887,7 @@ def deploy
     abort "Error: couldn't fetch git commit meta-data, not in a git directory?"
   end
 
+  # GitHub Actions sets these on every run
   deployed_by = ENV["GITHUB_ACTOR"].to_s.empty? ? `git config user.name`.chomp : ENV["GITHUB_ACTOR"]
   branch =
     if !ENV["GITHUB_HEAD_REF"].to_s.empty?
@@ -1894,7 +1895,7 @@ def deploy
     elsif ENV["GITHUB_REF_TYPE"] == "branch"
       ENV["GITHUB_REF_NAME"]
     else
-      `git branch --show-current`.chomp 
+      `git branch --show-current`.chomp
     end
   trailers = { "Deployed-By" => deployed_by, "Branch" => branch }
     .filter_map { |key, value| "#{key}: #{value}" unless value.empty? }
