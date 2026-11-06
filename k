@@ -2038,9 +2038,11 @@ def releases
     puts "USAGE:"
     puts "k releases [-v] <application>"
     puts ""
+    puts "OPTIONS:"
+    puts "-v" + gray(" also show who deployed each release and from which branch")
+    puts ""
     puts "EXAMPLE:"
-    puts "k releases <application>" + gray(" lists the past 15 releases for <application>")
-    puts "k releases -v <application>" + gray(" also shows who deployed each release and from which branch")
+    puts "k releases myapp"
     exit
   end
 
