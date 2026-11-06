@@ -36,3 +36,10 @@ Note that `k` stores all its configuration in YAML at `~/.k/config`. Feel free t
 Run `k` to get a list of commands.
 
 We don't provide any rigorous documentation as of yet. If you've used the Heroku CLI tool a lot of things will seem familiar. Feel free to explore the available commands and provide feedback if something is hard to understand or broken.
+
+### CI
+
+On GitHub Actions, use [k-action](https://github.com/reclaim-the-stack/k-action) to install and configure `k`. It also sets these environment variables for later steps, which a step's own `env` can override:
+
+- `K_DEPLOYED_BY` - who `k deploy` records as deploying, from `GITHUB_ACTOR`
+- `K_DEPLOY_BRANCH` - the branch `k deploy` records, from the pull request's head branch or the pushed branch
