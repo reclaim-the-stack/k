@@ -262,8 +262,7 @@ def print_commands
   puts "k opensearch:dashboards <cluster-name>" + gray(" access opensearch dashboards for a cluster")
   puts "k pg" + gray(" list postgres related commands")
   puts "k redis" + gray(" list redis related commands")
-  puts "k releases <application>" + gray(" lists the past 15 releases for an application")
-  puts "k releases -v <application>" + gray(" also shows who deployed each release and from which branch")
+  puts "k releases [-v] <application>" + gray(" lists the past 15 releases for an application")
   puts "k restart <application>" + gray(" restart application deployments")
   puts "k rollback <application>" + gray(" show prompt to rollback an application")
   puts "k run <application> <command>" + gray(" run a command using a one off pod")
@@ -2029,9 +2028,21 @@ def env_edit
 end
 
 def releases
-  verbose = ARGV.delete("-v") || ARGV.delete("--verbose")
+  verbose = ARGV.delete("-v")
   application = ARGV.delete_at(0)
-  abort "Must pass name of application, eg. k releases <application>" unless application
+
+  unless application
+    puts "DESCRIPTION:"
+    puts "The k releases command lists the past 15 releases for an application from the history of its values.yaml in the gitops repository. With -v it also shows who deployed each release and from which branch, read from the Deployed-By and Branch trailers that k deploy adds to its commits. Releases from before the trailers leave those columns empty." # rubocop:disable Layout/LineLength
+    puts ""
+    puts "USAGE:"
+    puts "k releases [-v] <application>"
+    puts ""
+    puts "EXAMPLE:"
+    puts "k releases <application>" + gray(" lists the past 15 releases for <application>")
+    puts "k releases -v <application>" + gray(" also shows who deployed each release and from which branch")
+    exit
+  end
 
   require "time"
 
