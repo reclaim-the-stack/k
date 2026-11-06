@@ -3,6 +3,8 @@
 # ENV variables of note:
 # HOME - the user's home directory, we'll use this to store configuration and manage gitop repos under ~/.k
 # K_CONTEXT - override the active context for this invocation, eg. K_CONTEXT=staging k config my-app
+# K_DEPLOYED_BY - who `k deploy` records as deploying, defaults to `git config user.name`
+# K_DEPLOY_BRANCH - the branch `k deploy` records, defaults to the current git branch
 # KAIL_PATH - path to kail executable, defaults to "kail"
 # KUBESEAL_PATH - path to kubeseal executable, defaults to "kubeseal"
 # YQ_PATH - path to yq executable, defaults to "yq"
@@ -1860,7 +1862,7 @@ end
 def deploy
   if ARGV.empty?
     puts "DESCRIPTION:"
-    puts "The k deploy command deploys a Docker image to an application in Kubernetes by modifying the image attribute in the applications values.yaml file. Should be run from the application git repository. If no explicit git-sha is provided, the current git-sha of the current working directory is used. By default the command will verify that the image exists in the docker registry before proceeding, this doesn't appear to work with all docker registries and can be disabled with the --disable-image-verification flag." # rubocop:disable Layout/LineLength
+    puts "The k deploy command deploys a Docker image to an application in Kubernetes by modifying the image attribute in the applications values.yaml file. Should be run from the application git repository. If no explicit git-sha is provided, the current git-sha of the current working directory is used. By default the command will verify that the image exists in the docker registry before proceeding, this doesn't appear to work with all docker registries and can be disabled with the --disable-image-verification flag. The commit records who deployed and from which branch, taken from K_DEPLOYED_BY and K_DEPLOY_BRANCH when set (eg. by CI) and otherwise from git." # rubocop:disable Layout/LineLength
     puts ""
     puts "USAGE:"
     puts "k deploy <application> [<git-sha>] [--enable-image-verification]"
@@ -1887,16 +1889,8 @@ def deploy
     abort "Error: couldn't fetch git commit meta-data, not in a git directory?"
   end
 
-  # GitHub Actions sets these on every run
-  deployed_by = ENV["GITHUB_ACTOR"].to_s.empty? ? `git config user.name`.chomp : ENV["GITHUB_ACTOR"]
-  branch =
-    if !ENV["GITHUB_HEAD_REF"].to_s.empty?
-      ENV["GITHUB_HEAD_REF"]
-    elsif ENV["GITHUB_REF_TYPE"] == "branch"
-      ENV["GITHUB_REF_NAME"]
-    else
-      `git branch --show-current`.chomp
-    end
+  deployed_by = ENV["K_DEPLOYED_BY"].to_s.empty? ? `git config user.name`.chomp : ENV["K_DEPLOYED_BY"]
+  branch = ENV["K_DEPLOY_BRANCH"].to_s.empty? ? `git branch --show-current`.chomp : ENV["K_DEPLOY_BRANCH"]
   trailers = { "Deployed-By" => deployed_by, "Branch" => branch }
     .filter_map { |key, value| "#{key}: #{value}" unless value.empty? }
     .join("\n")
