@@ -39,7 +39,4 @@ We don't provide any rigorous documentation as of yet. If you've used the Heroku
 
 ### CI
 
-On GitHub Actions, use [k-action](https://github.com/reclaim-the-stack/k-action) to install and configure `k`. It also sets these environment variables for later steps, which a step's own `env` can override:
-
-- `K_DEPLOYED_BY` - who `k deploy` records as deploying, from `GITHUB_ACTOR`
-- `K_DEPLOY_BRANCH` - the branch `k deploy` records, from the pull request's head branch or the pushed branch
+On GitHub Actions, use [k-action](https://github.com/reclaim-the-stack/k-action). It installs `k`, configures a context, and sets environment variables that `k` reads, see its README. On other CIs, do the same yourself: install `k`, write a context to `~/.k/config`, and set the environment variables your commands need.
