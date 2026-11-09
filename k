@@ -3,6 +3,8 @@
 # ENV variables of note:
 # HOME - the user's home directory, we'll use this to store configuration and manage gitop repos under ~/.k
 # K_CONTEXT - override the active context for this invocation, eg. K_CONTEXT=staging k config my-app
+# K_DEPLOYED_BY - who `k deploy` records as deploying, defaults to `git config user.name`
+# K_DEPLOY_BRANCH - the branch `k deploy` records, defaults to the current git branch
 # KAIL_PATH - path to kail executable, defaults to "kail"
 # KUBESEAL_PATH - path to kubeseal executable, defaults to "kubeseal"
 # YQ_PATH - path to yq executable, defaults to "yq"
@@ -262,7 +264,7 @@ def print_commands
   puts "k opensearch:dashboards <cluster-name>" + gray(" access opensearch dashboards for a cluster")
   puts "k pg" + gray(" list postgres related commands")
   puts "k redis" + gray(" list redis related commands")
-  puts "k releases <application>" + gray(" lists the past 15 releases for an application")
+  puts "k releases [-v] <application>" + gray(" lists the past 15 releases for an application")
   puts "k restart <application>" + gray(" restart application deployments")
   puts "k rollback <application>" + gray(" show prompt to rollback an application")
   puts "k run <application> <command>" + gray(" run a command using a one off pod")
@@ -1860,7 +1862,7 @@ end
 def deploy
   if ARGV.empty?
     puts "DESCRIPTION:"
-    puts "The k deploy command deploys a Docker image to an application in Kubernetes by modifying the image attribute in the applications values.yaml file. Should be run from the application git repository. If no explicit git-sha is provided, the current git-sha of the current working directory is used. By default the command will verify that the image exists in the docker registry before proceeding, this doesn't appear to work with all docker registries and can be disabled with the --disable-image-verification flag." # rubocop:disable Layout/LineLength
+    puts "The k deploy command deploys a Docker image to an application in Kubernetes by modifying the image attribute in the applications values.yaml file. Should be run from the application git repository. If no explicit git-sha is provided, the current git-sha of the current working directory is used. By default the command will verify that the image exists in the docker registry before proceeding, this doesn't appear to work with all docker registries and can be disabled with the --disable-image-verification flag. The commit records who deployed and from which branch, taken from K_DEPLOYED_BY and K_DEPLOY_BRANCH when set (eg. by CI) and otherwise from git." # rubocop:disable Layout/LineLength
     puts ""
     puts "USAGE:"
     puts "k deploy <application> [<git-sha>] [--enable-image-verification]"
@@ -1886,6 +1888,12 @@ def deploy
   if commit_author.empty? || commit_email.empty? || commit_subject.empty?
     abort "Error: couldn't fetch git commit meta-data, not in a git directory?"
   end
+
+  deployed_by = ENV["K_DEPLOYED_BY"].to_s.empty? ? `git config user.name`.chomp : ENV["K_DEPLOYED_BY"]
+  branch = ENV["K_DEPLOY_BRANCH"].to_s.empty? ? `git branch --show-current`.chomp : ENV["K_DEPLOY_BRANCH"]
+  trailers = { "Deployed-By" => deployed_by, "Branch" => branch }
+    .filter_map { |key, value| "#{key}: #{value}" unless value.empty? }
+    .join("\n")
 
   in_argo_repo do
     chart_yaml_path = "applications/#{application}/Chart.yaml"
@@ -1933,11 +1941,13 @@ def deploy
     end
 
     repository = image.split("/").last.split(":").first
-    system_or_die %(git commit --author="#{commit_author} <#{commit_email}>" -a -F - <<EOF
+    system_or_die %(git commit --author="#{commit_author} <#{commit_email}>" -a -F - <<'EOF'
 
 #{application}: Deploy "#{commit_subject}"
 
 GitHub link: https://#{GIT_HOST}/#{ORGANIZATION}/#{repository}/commit/#{git_sha}
+
+#{trailers}
 EOF)
 
     safe_git_push
@@ -2012,8 +2022,23 @@ def env_edit
 end
 
 def releases
+  verbose = ARGV.delete("-v")
   application = ARGV.delete_at(0)
-  abort "Must pass name of application, eg. k releases <application>" unless application
+
+  unless application
+    puts "DESCRIPTION:"
+    puts "The k releases command lists the past 15 releases for an application from the history of its values.yaml in the gitops repository. With -v it also shows who deployed each release and from which branch, read from the Deployed-By and Branch trailers that k deploy adds to its commits. Releases from before the trailers leave those columns empty." # rubocop:disable Layout/LineLength
+    puts ""
+    puts "USAGE:"
+    puts "k releases [-v] <application>"
+    puts ""
+    puts "OPTIONS:"
+    puts "-v" + gray(" also show who deployed each release and from which branch")
+    puts ""
+    puts "EXAMPLE:"
+    puts "k releases myapp"
+    exit
+  end
 
   require "time"
 
@@ -2022,10 +2047,14 @@ def releases
     abort "Error: No releases found for #{application}" if releases.empty?
 
     longest_subject = releases.map(&:subject).max_by(&:length)
+    author_width = [*releases.map { |release| release.author.length }, "Author".length].max
+    deployed_by_width = [*releases.map { |release| release.deployed_by.length }, "Deployed by".length].max
 
     puts gray("=== ") + bold(application) + bold(" Releases")
     puts ""
-    puts gray("Version".ljust(13) + "Time".ljust(21) + "Subject".ljust(longest_subject.length + 2) + "Author")
+    header = "Version".ljust(13) + "Time".ljust(21) + "Subject".ljust(longest_subject.length + 2)
+    header += verbose ? "Author".ljust(author_width + 2) + "Deployed by".ljust(deployed_by_width + 2) + "Branch" : "Author"
+    puts gray(header)
     today = Time.now.strftime("%Y-%m-%d")
     releases.each do |release|
       time_to_show =
@@ -2034,7 +2063,10 @@ def releases
         else
           release.time.strftime("%Y-%m-%d %H:%M:%S")
         end
-      puts "#{bold(release.pretty_sha)}  #{green(time_to_show)}  #{release.subject.ljust(longest_subject.length)}  #{cyan(release.author)}"
+      author = verbose ? release.author.ljust(author_width) : release.author
+      line = "#{bold(release.pretty_sha)}  #{green(time_to_show)}  #{release.subject.ljust(longest_subject.length)}  #{cyan(author)}"
+      line += "  #{release.deployed_by.ljust(deployed_by_width)}  #{release.branch}" if verbose
+      puts line.rstrip
     end
   end
 end
@@ -3466,13 +3498,13 @@ def lookup_latest_releases(application)
   git_log = `
     git log \
       -n 15 \
-      --pretty=format:'%H<col>%aN<col>%aD<col>%ar<col>%s<col>%b<row>' \
+      --pretty=format:'%H<col>%aN<col>%aD<col>%ar<col>%s<col>%b<col>%(trailers:key=Deployed-By,valueonly)<col>%(trailers:key=Branch,valueonly)<row>' \
       --follow -- applications/#{application}/values.yaml
   `
-  release_struct = Struct.new(:sha, :pretty_sha, :author, :time, :relative_time, :subject, :body)
+  release_struct = Struct.new(:sha, :pretty_sha, :author, :time, :relative_time, :subject, :body, :deployed_by, :branch)
 
   git_log.split("<row>").map do |row|
-    sha, author, time, relative_time, subject, body = row.strip.split("<col>")
+    sha, author, time, relative_time, subject, body, deployed_by, branch = row.strip.split("<col>")
 
     release_struct.new(
       sha,
@@ -3482,6 +3514,8 @@ def lookup_latest_releases(application)
       relative_time,
       subject.delete_prefix("#{application}: "),
       body,
+      deployed_by.to_s.strip,
+      branch.to_s.strip,
     )
   end
 end

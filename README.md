@@ -36,3 +36,7 @@ Note that `k` stores all its configuration in YAML at `~/.k/config`. Feel free t
 Run `k` to get a list of commands.
 
 We don't provide any rigorous documentation as of yet. If you've used the Heroku CLI tool a lot of things will seem familiar. Feel free to explore the available commands and provide feedback if something is hard to understand or broken.
+
+### Usage on CI
+
+On GitHub Actions, use [k-action](https://github.com/reclaim-the-stack/k-action). It installs `k`, configures a context, and sets environment variables that `k` reads, see its README. On other CIs, do the same yourself: install `k`, write a context to `~/.k/config`, and set the environment variables your commands need.
